@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Copyright (C) 2019, Raspberry Pi (Trading) Limited
+ * Copyright (C) 2019-2021, Raspberry Pi (Trading) Limited
  *
  * cam_helper.hpp - helper class providing camera information
  */
@@ -62,7 +62,7 @@ class CamHelper
 {
 public:
 	static CamHelper *Create(std::string const &cam_name);
-	CamHelper(MdParser *parser, unsigned int frameIntegrationDiff);
+	CamHelper(std::unique_ptr<MdParser> parser, unsigned int frameIntegrationDiff);
 	virtual ~CamHelper();
 	void SetCameraMode(const CameraMode &mode);
 	MdParser &Parser() const { return *parser_; }
@@ -80,7 +80,7 @@ public:
 	virtual unsigned int MistrustFramesModeSwitch() const;
 
 protected:
-	MdParser *parser_;
+	std::unique_ptr<MdParser> parser_;
 	CameraMode mode_;
 
 private:

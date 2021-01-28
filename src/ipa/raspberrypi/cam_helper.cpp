@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Copyright (C) 2019, Raspberry Pi (Trading) Limited
+ * Copyright (C) 2019-2021, Raspberry Pi (Trading) Limited
  *
  * cam_helper.cpp - helper information for different sensors
  */
@@ -34,15 +34,14 @@ CamHelper *CamHelper::Create(std::string const &cam_name)
 	return nullptr;
 }
 
-CamHelper::CamHelper(MdParser *parser, unsigned int frameIntegrationDiff)
-	: parser_(parser), initialized_(false),
+CamHelper::CamHelper(std::unique_ptr<MdParser> parser, unsigned int frameIntegrationDiff)
+	: parser_(std::move(parser)), initialized_(false),
 	  frameIntegrationDiff_(frameIntegrationDiff)
 {
 }
 
 CamHelper::~CamHelper()
 {
-	delete parser_;
 }
 
 uint32_t CamHelper::ExposureLines(double exposure_us) const
@@ -88,8 +87,10 @@ uint32_t CamHelper::GetVBlanking(double &exposure, double minFrameDuration,
 void CamHelper::SetCameraMode(const CameraMode &mode)
 {
 	mode_ = mode;
-	parser_->SetBitsPerPixel(mode.bitdepth);
-	parser_->SetLineLengthBytes(0); /* We use SetBufferSize. */
+	if (parser_) {
+		parser_->SetBitsPerPixel(mode.bitdepth);
+		parser_->SetLineLengthBytes(0); /* We use SetBufferSize. */
+	}
 	initialized_ = true;
 }
 

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Copyright (C) 2020, Raspberry Pi (Trading) Limited
+ * Copyright (C) 2020-2021, Raspberry Pi (Trading) Limited
  *
  * cam_helper_imx477.cpp - camera helper for imx477 sensor
  */
@@ -48,7 +48,7 @@ private:
 };
 
 CamHelperImx477::CamHelperImx477()
-	: CamHelper(new MdParserImx477(), frameIntegrationDiff)
+	: CamHelper(std::make_unique<MdParserImx477>(), frameIntegrationDiff)
 {
 }
 

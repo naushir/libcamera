@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Copyright (C) 2019, Raspberry Pi (Trading) Limited
+ * Copyright (C) 2019-2021, Raspberry Pi (Trading) Limited
  *
  * cam_helper_ov5647.cpp - camera information for ov5647 sensor
  */
@@ -38,7 +38,7 @@ private:
  */
 
 CamHelperOv5647::CamHelperOv5647()
-	: CamHelper(new MdParserRPi(), frameIntegrationDiff)
+	: CamHelper(std::unique_ptr<MdParserRPi>(), frameIntegrationDiff)
 {
 }
 

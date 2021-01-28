@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Copyright (C) 2019, Raspberry Pi (Trading) Limited
+ * Copyright (C) 2019-2021, Raspberry Pi (Trading) Limited
  *
  * cam_helper_imx219.cpp - camera helper for imx219 sensor
  */
@@ -60,9 +60,9 @@ private:
 
 CamHelperImx219::CamHelperImx219()
 #if ENABLE_EMBEDDED_DATA
-	: CamHelper(new MdParserImx219(), frameIntegrationDiff)
+	: CamHelper(std::unique_ptr<MdParserImx219>(), frameIntegrationDiff)
 #else
-	: CamHelper(new MdParserRPi(), frameIntegrationDiff)
+	: CamHelper(std::unique_ptr<MdParserRPi>(), frameIntegrationDiff)
 #endif
 {
 }
