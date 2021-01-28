@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /*
- * Copyright (C) 2019-2020, Raspberry Pi (Trading) Ltd.
+ * Copyright (C) 2019-2021, Raspberry Pi (Trading) Ltd.
  *
  * raspberrypi.cpp - Pipeline handler for Raspberry Pi devices
  */
@@ -188,7 +188,13 @@ public:
 	 */
 	enum class State { Stopped, Idle, Busy, IpaComplete };
 	State state_;
-	std::queue<FrameBuffer *> bayerQueue_;
+
+	struct BayerFrame {
+		FrameBuffer *buffer;
+		ControlList controls;
+	};
+
+	std::queue<BayerFrame> bayerQueue_;
 	std::queue<FrameBuffer *> embeddedQueue_;
 	std::deque<Request *> requestQueue_;
 
@@ -213,7 +219,7 @@ public:
 private:
 	void checkRequestCompleted();
 	void tryRunPipeline();
-	bool findMatchingBuffers(FrameBuffer *&bayerBuffer, FrameBuffer *&embeddedBuffer);
+	bool findMatchingBuffers(BayerFrame &bayerFrame, FrameBuffer *&embeddedBuffer);
 
 	unsigned int ispOutputCount_;
 };
@@ -1386,29 +1392,14 @@ void RPiCameraData::unicamBufferDequeue(FrameBuffer *buffer)
 			<< ", timestamp: " << buffer->metadata().timestamp;
 
 	if (stream == &unicam_[Unicam::Image]) {
-		bayerQueue_.push(buffer);
+		/*
+		 * Lookup the sensor controls used for this frame sequence from
+		 * StaggeredCtrl and queue them along with the frame buffer.
+		 */
+		ControlList ctrl = delayedCtrls_->get(buffer->metadata().sequence);
+		bayerQueue_.push({ buffer, std::move(ctrl) });
 	} else {
 		embeddedQueue_.push(buffer);
-
-		ControlList ctrl = delayedCtrls_->get(buffer->metadata().sequence);
-
-		/*
-		 * Sensor metadata is unavailable, so put the expected ctrl
-		 * values (accounting for the staggered delays) into the empty
-		 * metadata buffer.
-		 */
-		if (!sensorMetadata_) {
-			unsigned int bufferId = unicam_[Unicam::Embedded].getBufferId(buffer);
-			auto it = mappedEmbeddedBuffers_.find(bufferId);
-			if (it != mappedEmbeddedBuffers_.end()) {
-				uint32_t *mem = reinterpret_cast<uint32_t *>(it->second.maps()[0].data());
-				mem[0] = ctrl.get(V4L2_CID_EXPOSURE).get<int32_t>();
-				mem[1] = ctrl.get(V4L2_CID_ANALOGUE_GAIN).get<int32_t>();
-			} else {
-				LOG(RPI, Warning) << "Failed to find embedded buffer "
-						  << bufferId;
-			}
-		}
 	}
 
 	handleState();
@@ -1662,7 +1653,8 @@ void RPiCameraData::applyScalerCrop(const ControlList &controls)
 
 void RPiCameraData::tryRunPipeline()
 {
-	FrameBuffer *bayerBuffer, *embeddedBuffer;
+	FrameBuffer *embeddedBuffer;
+	BayerFrame bayerFrame;
 	IPAOperationData op;
 
 	/* If any of our request or buffer queues are empty, we cannot proceed. */
@@ -1670,7 +1662,7 @@ void RPiCameraData::tryRunPipeline()
 	    bayerQueue_.empty() || embeddedQueue_.empty())
 		return;
 
-	if (!findMatchingBuffers(bayerBuffer, embeddedBuffer))
+	if (!findMatchingBuffers(bayerFrame, embeddedBuffer))
 		return;
 
 	/* Take the first request from the queue and action the IPA. */
@@ -1691,7 +1683,7 @@ void RPiCameraData::tryRunPipeline()
 	/* Set our state to say the pipeline is active. */
 	state_ = State::Busy;
 
-	unsigned int bayerId = unicam_[Unicam::Image].getBufferId(bayerBuffer);
+	unsigned int bayerId = unicam_[Unicam::Image].getBufferId(bayerFrame.buffer);
 	unsigned int embeddedId = unicam_[Unicam::Embedded].getBufferId(embeddedBuffer);
 
 	LOG(RPI, Debug) << "Signalling RPi::IPA_EVENT_SIGNAL_ISP_PREPARE:"
@@ -1699,26 +1691,28 @@ void RPiCameraData::tryRunPipeline()
 			<< " Embedded buffer id: " << embeddedId;
 
 	op.operation = RPi::IPA_EVENT_SIGNAL_ISP_PREPARE;
-	op.data = { RPi::BufferMask::EMBEDDED_DATA | embeddedId,
-		    RPi::BufferMask::BAYER_DATA | bayerId };
+	op.data.push_back(RPi::BufferMask::BAYER_DATA | bayerId);
+	op.data.push_back(RPi::BufferMask::EMBEDDED_DATA | embeddedId);
+	op.controls.emplace_back(std::move(bayerFrame.controls));
+
 	ipa_->processEvent(op);
 }
 
-bool RPiCameraData::findMatchingBuffers(FrameBuffer *&bayerBuffer, FrameBuffer *&embeddedBuffer)
+bool RPiCameraData::findMatchingBuffers(BayerFrame &bayerFrame, FrameBuffer *&embeddedBuffer)
 {
 	unsigned int embeddedRequeueCount = 0, bayerRequeueCount = 0;
 
 	/* Loop until we find a matching bayer and embedded data buffer. */
 	while (!bayerQueue_.empty()) {
 		/* Start with the front of the bayer queue. */
-		bayerBuffer = bayerQueue_.front();
+		bayerFrame = bayerQueue_.front();
 
 		/*
 		 * Find the embedded data buffer with a matching timestamp to pass to
 		 * the IPA. Any embedded buffers with a timestamp lower than the
 		 * current bayer buffer will be removed and re-queued to the driver.
 		 */
-		uint64_t ts = bayerBuffer->metadata().timestamp;
+		uint64_t ts = bayerFrame.buffer->metadata().timestamp;
 		embeddedBuffer = nullptr;
 		while (!embeddedQueue_.empty()) {
 			FrameBuffer *b = embeddedQueue_.front();
@@ -1748,7 +1742,7 @@ bool RPiCameraData::findMatchingBuffers(FrameBuffer *&bayerBuffer, FrameBuffer *
 				 * the front of the queue. This buffer is now orphaned, so requeue
 				 * it back to the device.
 				 */
-				unicam_[Unicam::Image].queueBuffer(bayerQueue_.front());
+				unicam_[Unicam::Image].queueBuffer(bayerQueue_.front().buffer);
 				bayerQueue_.pop();
 				bayerRequeueCount++;
 				LOG(RPI, Warning) << "Dropping unmatched input frame in stream "
@@ -1766,7 +1760,7 @@ bool RPiCameraData::findMatchingBuffers(FrameBuffer *&bayerBuffer, FrameBuffer *
 
 				LOG(RPI, Warning) << "Flushing bayer stream!";
 				while (!bayerQueue_.empty()) {
-					unicam_[Unicam::Image].queueBuffer(bayerQueue_.front());
+					unicam_[Unicam::Image].queueBuffer(bayerQueue_.front().buffer);
 					bayerQueue_.pop();
 				}
 				flushedBuffers = true;

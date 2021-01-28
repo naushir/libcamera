@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Copyright (C) 2019-2020, Raspberry Pi (Trading) Ltd.
+ * Copyright (C) 2019-2021, Raspberry Pi (Trading) Ltd.
  *
  * rpi.cpp - Raspberry Pi Image Processing Algorithms
  */
@@ -99,9 +99,11 @@ private:
 	bool validateIspControls();
 	void queueRequest(const ControlList &controls);
 	void returnEmbeddedBuffer(unsigned int bufferId);
-	void prepareISP(unsigned int bufferId);
+	void prepareISP(const IPAOperationData &event);
 	void reportMetadata();
 	bool parseEmbeddedData(unsigned int bufferId, struct DeviceStatus &deviceStatus);
+	void fillDeviceStatus(uint32_t exposureLines, uint32_t gainCode,
+			      struct DeviceStatus &deviceStatus);
 	void processStats(unsigned int bufferId);
 	void applyFrameDurations(double minFrameDuration, double maxFrameDuration);
 	void applyAGC(const struct AgcStatus *agcStatus, ControlList &ctrls);
@@ -451,15 +453,14 @@ void IPARPi::processEvent(const IPAOperationData &event)
 	}
 
 	case RPi::IPA_EVENT_SIGNAL_ISP_PREPARE: {
-		unsigned int embeddedbufferId = event.data[0];
-		unsigned int bayerbufferId = event.data[1];
+		unsigned int bayerbufferId = event.data[0];
 
 		/*
 		 * At start-up, or after a mode-switch, we may want to
 		 * avoid running the control algos for a few frames in case
 		 * they are "unreliable".
 		 */
-		prepareISP(embeddedbufferId);
+		prepareISP(event);
 		frameCount_++;
 
 		/* Ready to push the input buffer into the ISP. */
@@ -939,13 +940,30 @@ void IPARPi::returnEmbeddedBuffer(unsigned int bufferId)
 	queueFrameAction.emit(0, op);
 }
 
-void IPARPi::prepareISP(unsigned int bufferId)
+void IPARPi::prepareISP(const IPAOperationData &event)
 {
 	struct DeviceStatus deviceStatus = {};
-	bool success = parseEmbeddedData(bufferId, deviceStatus);
+	bool success = true;
 
-	/* Done with embedded data now, return to pipeline handler asap. */
-	returnEmbeddedBuffer(bufferId);
+	if (event.data.size() == 2) {
+		/*
+		 * Pipeline handler has supplied us with an embedded data buffer,
+		 * so parse it and extract the exposure and gain.
+		 */
+		unsigned int bufferId = event.data[1];
+		success = parseEmbeddedData(bufferId, deviceStatus);
+
+		/* Done with embedded data now, return to pipeline handler asap. */
+		returnEmbeddedBuffer(bufferId);
+	} else {
+		/*
+		 * Pipeline handler has not supplied an embedded data buffer,
+		 * so pull the exposure and gain values from the control list.
+		 */
+		int32_t exposureLines = event.controls[0].get(V4L2_CID_EXPOSURE).get<int32_t>();
+		int32_t gainCode = event.controls[0].get(V4L2_CID_ANALOGUE_GAIN).get<int32_t>();
+		fillDeviceStatus(exposureLines, gainCode, deviceStatus);
+	}
 
 	if (success) {
 		ControlList ctrls(ispCtrls_);
@@ -1026,19 +1044,27 @@ bool IPARPi::parseEmbeddedData(unsigned int bufferId, struct DeviceStatus &devic
 			return false;
 		}
 
-		deviceStatus.shutter_speed = helper_->Exposure(exposureLines);
 		if (helper_->Parser().GetGainCode(gainCode) != RPiController::MdParser::Status::OK) {
 			LOG(IPARPI, Error) << "Gain failed";
 			return false;
 		}
 
-		deviceStatus.analogue_gain = helper_->Gain(gainCode);
-		LOG(IPARPI, Debug) << "Metadata - Exposure : "
-				   << deviceStatus.shutter_speed << " Gain : "
-				   << deviceStatus.analogue_gain;
+		fillDeviceStatus(exposureLines, gainCode, deviceStatus);
 	}
 
 	return true;
+}
+
+void IPARPi::fillDeviceStatus(uint32_t exposureLines, uint32_t gainCode,
+			      struct DeviceStatus &deviceStatus)
+{
+	deviceStatus.shutter_speed = helper_->Exposure(exposureLines);
+	deviceStatus.analogue_gain = helper_->Gain(gainCode);
+
+	LOG(IPARPI, Debug) << "Metadata - Exposure : "
+			   << deviceStatus.shutter_speed
+			   << " Gain : "
+			   << deviceStatus.analogue_gain;
 }
 
 void IPARPi::processStats(unsigned int bufferId)
