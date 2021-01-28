@@ -19,8 +19,6 @@
 #include "cam_helper.hpp"
 #if ENABLE_EMBEDDED_DATA
 #include "md_parser.hpp"
-#else
-#include "md_parser_rpi.hpp"
 #endif
 
 using namespace RPiController;
@@ -62,7 +60,7 @@ CamHelperImx219::CamHelperImx219()
 #if ENABLE_EMBEDDED_DATA
 	: CamHelper(std::unique_ptr<MdParserImx219>(), frameIntegrationDiff)
 #else
-	: CamHelper(std::unique_ptr<MdParserRPi>(), frameIntegrationDiff)
+	: CamHelper(std::unique_ptr<MdParser>{}, frameIntegrationDiff)
 #endif
 {
 }
