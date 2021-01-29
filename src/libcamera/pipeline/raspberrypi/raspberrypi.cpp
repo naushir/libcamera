@@ -43,6 +43,22 @@ namespace libcamera {
 
 LOG_DEFINE_CATEGORY(RPI)
 
+/*
+ * Set this to true to reject and drop all bayer frames that do not have a
+ * matching embedded data buffer and vice-versa. This guarantees the IPA will
+ * always have the correct frame exposure and gain values to use.
+ *
+ * Set this to false to use bayer frames that do not have a matching embedded
+ * data buffer. In this case, IPA will use use our local history for gain and
+ * exposure values, occasional frame drops may cause these number to be out of
+ * sync for a short period.
+ *
+ * \todo Ideally, this property should be set by the application, but we don't
+ * have any mechanism to pass generic properties into a pipeline handler at
+ * present.
+ */
+static const bool StrictBufferMatching = true;
+
 namespace {
 
 bool isRaw(PixelFormat &pixFmt)
@@ -1732,13 +1748,13 @@ bool RPiCameraData::findMatchingBuffers(BayerFrame &bayerFrame, FrameBuffer *&em
 		embeddedBuffer = nullptr;
 		while (!embeddedQueue_.empty()) {
 			FrameBuffer *b = embeddedQueue_.front();
-			if (!unicam_[Unicam::Embedded].isExternal() && b->metadata().timestamp < ts) {
+			if (b->metadata().timestamp < ts) {
 				embeddedQueue_.pop();
 				unicam_[Unicam::Embedded].queueBuffer(b);
 				embeddedRequeueCount++;
 				LOG(RPI, Warning) << "Dropping unmatched input frame in stream "
 						  << unicam_[Unicam::Embedded].name();
-			} else if (unicam_[Unicam::Embedded].isExternal() || b->metadata().timestamp == ts) {
+			} else if (b->metadata().timestamp == ts) {
 				/* We pop the item from the queue lower down. */
 				embeddedBuffer = b;
 				break;
@@ -1752,10 +1768,15 @@ bool RPiCameraData::findMatchingBuffers(BayerFrame &bayerFrame, FrameBuffer *&em
 
 			LOG(RPI, Debug) << "Could not find matching embedded buffer";
 
-			if (!sensorMetadata_) {
+			if (unicam_[Unicam::Embedded].isExternal() ||
+			    !StrictBufferMatching || !sensorMetadata_) {
 				/*
-				 * If there is no sensor metadata, simply return the
-				 * first bayer frame in the queue.
+				 * If any of the follwing is true:
+				 * - This is an external stream buffer (so cannot be dropped).
+				 * - We do not care about strict buffer matching.
+				 * - There is no sensor metadata present.
+				 * we can simply return the first bayer frame in the queue
+				 * without a matching embedded buffer.
 				 */
 				LOG(RPI, Debug) << "Returning bayer frame without a match";
 				bayerQueue_.pop();
