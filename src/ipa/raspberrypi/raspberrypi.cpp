@@ -67,8 +67,7 @@ class IPARPi : public ipa::RPi::IPARPiInterface
 {
 public:
 	IPARPi()
-		: lastMode_({}), controller_(), controllerInit_(false),
-		  frameCount_(0), checkCount_(0), mistrustCount_(0),
+		: controller_(), frameCount_(0), checkCount_(0), mistrustCount_(0),
 		  lsTable_(nullptr), firstStart_(true)
 	{
 	}
@@ -129,12 +128,10 @@ private:
 
 	/* Camera sensor params. */
 	CameraMode mode_;
-	CameraMode lastMode_;
 
 	/* Raspberry Pi controller specific defines. */
 	std::unique_ptr<RPiController::CamHelper> helper_;
 	RPiController::Controller controller_;
-	bool controllerInit_;
 	RPiController::Metadata rpiMetadata_;
 
 	/*
@@ -386,8 +383,6 @@ int IPARPi::configure(const CameraSensorInfo &sensorInfo,
 
 		result->controls = std::move(ctrls);
 	}
-
-	lastMode_ = mode_;
 
 	return 0;
 }
