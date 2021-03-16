@@ -127,9 +127,6 @@ private:
 	ControlInfoMap ispCtrls_;
 	ControlList libcameraMetadata_;
 
-	/* IPA configuration. */
-	std::string tuningFile_;
-
 	/* Camera sensor params. */
 	CameraMode mode_;
 	CameraMode lastMode_;
@@ -166,8 +163,6 @@ private:
 
 int IPARPi::init(const IPASettings &settings, ipa::RPi::SensorConfig *sensorConfig)
 {
-	tuningFile_ = settings.configurationFile;
-
 	/*
 	 * Load the "helper" for this sensor. This tells us all the device specific stuff
 	 * that the kernel driver doesn't. We only do this the first time; we don't need
@@ -192,6 +187,10 @@ int IPARPi::init(const IPASettings &settings, ipa::RPi::SensorConfig *sensorConf
 	sensorConfig->exposureDelay = exposureDelay;
 	sensorConfig->vblankDelay = vblankDelay;
 	sensorConfig->sensorMetadata = sensorMetadata;
+
+	/* Load the tuning file for this sensor. */
+	controller_.Read(settings.configurationFile.c_str());
+	controller_.Initialise();
 
 	return 0;
 }
@@ -374,12 +373,7 @@ int IPARPi::configure(const CameraSensorInfo &sensorInfo,
 	/* Pass the camera mode to the CamHelper to setup algorithms. */
 	helper_->SetCameraMode(mode_);
 
-	if (!controllerInit_) {
-		/* Load the tuning file for this sensor. */
-		controller_.Read(tuningFile_.c_str());
-		controller_.Initialise();
-		controllerInit_ = true;
-
+	if (firstStart_) {
 		/* Supply initial values for frame durations. */
 		applyFrameDurations(defaultMinFrameDuration, defaultMaxFrameDuration);
 
