@@ -85,8 +85,8 @@ public:
 	int configure(const CameraSensorInfo &sensorInfo,
 		      const std::map<unsigned int, IPAStream> &streamConfig,
 		      const std::map<unsigned int, ControlInfoMap> &entityControls,
-		      const ipa::RPi::ConfigInput &data,
-		      ipa::RPi::ConfigOutput *response) override;
+		      const ipa::RPi::IPAConfig &data,
+		      ControlList *controls) override;
 	void mapBuffers(const std::vector<IPABuffer> &buffers) override;
 	void unmapBuffers(const std::vector<unsigned int> &ids) override;
 	void signalStatReady(const uint32_t bufferId) override;
@@ -313,15 +313,13 @@ void IPARPi::setMode(const CameraSensorInfo &sensorInfo)
 int IPARPi::configure(const CameraSensorInfo &sensorInfo,
 		      [[maybe_unused]] const std::map<unsigned int, IPAStream> &streamConfig,
 		      const std::map<unsigned int, ControlInfoMap> &entityControls,
-		      const ipa::RPi::ConfigInput &ipaConfig,
-		      ipa::RPi::ConfigOutput *result)
+		      const ipa::RPi::IPAConfig &ipaConfig,
+		      ControlList *controls)
 {
 	if (entityControls.size() != 2) {
 		LOG(IPARPI, Error) << "No ISP or sensor controls found.";
 		return -1;
 	}
-
-	result->params = 0;
 
 	sensorCtrls_ = entityControls.at(0);
 	ispCtrls_ = entityControls.at(1);
@@ -379,7 +377,8 @@ int IPARPi::configure(const CameraSensorInfo &sensorInfo,
 		agcStatus.analogue_gain = DefaultAnalogueGain;
 		applyAGC(&agcStatus, ctrls);
 
-		result->controls = std::move(ctrls);
+		ASSERT(controls);
+		*controls = std::move(ctrls);
 	}
 
 	return 0;
