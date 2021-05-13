@@ -45,6 +45,7 @@
 #include "denoise_algorithm.hpp"
 #include "denoise_status.h"
 #include "dpc_status.h"
+#include "duration.hpp"
 #include "focus_status.h"
 #include "geq_status.h"
 #include "lux_status.h"
@@ -55,19 +56,24 @@
 
 namespace libcamera {
 
+using namespace std::literals::chrono_literals;
+using RPiController::Duration;
+using RPiController::DurationValue;
+using RPiController::operator<<;
+
 /* Configure the sensor with these values initially. */
 constexpr double DefaultAnalogueGain = 1.0;
-constexpr unsigned int DefaultExposureTime = 20000;
-constexpr double defaultMinFrameDuration = 1e6 / 30.0;
-constexpr double defaultMaxFrameDuration = 1e6 / 0.01;
+constexpr Duration DefaultExposureTime = 20.0ms;
+constexpr Duration defaultMinFrameDuration = 1.0s / 30.0;
+constexpr Duration defaultMaxFrameDuration = 100.0s;
 
 /*
- * Determine the minimum allowable inter-frame duration (in us) to run the
- * controller algorithms. If the pipeline handler provider frames at a rate
- * higher than this, we rate-limit the controller Prepare() and Process() calls
- * to lower than or equal to this rate.
+ * Determine the minimum allowable inter-frame duration to run the controller
+ * algorithms. If the pipeline handler provider frames at a rate higher than this,
+ * we rate-limit the controller Prepare() and Process() calls to lower than or
+ * equal to this rate.
  */
-constexpr double controllerMinFrameDuration = 1e6 / 60.0;
+constexpr Duration controllerMinFrameDuration = 1.0s / 60.0;
 
 LOG_DEFINE_CATEGORY(IPARPI)
 
@@ -111,7 +117,8 @@ private:
 	void reportMetadata();
 	void fillDeviceStatus(const ControlList &sensorControls);
 	void processStats(unsigned int bufferId);
-	void applyFrameDurations(double minFrameDuration, double maxFrameDuration);
+	void applyFrameDurations(const Duration &minFrameDuration,
+				 const Duration &maxFrameDuration);
 	void applyAGC(const struct AgcStatus *agcStatus, ControlList &ctrls);
 	void applyAWB(const struct AwbStatus *awbStatus, ControlList &ctrls);
 	void applyDG(const struct AgcStatus *dgStatus, ControlList &ctrls);
@@ -167,9 +174,9 @@ private:
 	/* Distinguish the first camera start from others. */
 	bool firstStart_;
 
-	/* Frame duration (1/fps) limits, given in microseconds. */
-	double minFrameDuration_;
-	double maxFrameDuration_;
+	/* Frame duration (1/fps) limits. */
+	Duration minFrameDuration_;
+	Duration maxFrameDuration_;
 };
 
 int IPARPi::init(const IPASettings &settings, ipa::RPi::SensorConfig *sensorConfig)
@@ -314,7 +321,7 @@ void IPARPi::setMode(const CameraSensorInfo &sensorInfo)
 	 * Calculate the line length in nanoseconds as the ratio between
 	 * the line length in pixels and the pixel rate.
 	 */
-	mode_.line_length = 1e9 * sensorInfo.lineLength / sensorInfo.pixelRate;
+	mode_.line_length = sensorInfo.lineLength * (1.0s / sensorInfo.pixelRate);
 
 	/*
 	 * Set the frame length limits for the mode to ensure exposure and
@@ -387,7 +394,7 @@ int IPARPi::configure(const CameraSensorInfo &sensorInfo,
 		/* Supply initial values for gain and exposure. */
 		ControlList ctrls(sensorCtrls_);
 		AgcStatus agcStatus;
-		agcStatus.shutter_time = DefaultExposureTime;
+		agcStatus.shutter_time = DurationValue<std::micro>(DefaultExposureTime);
 		agcStatus.analogue_gain = DefaultAnalogueGain;
 		applyAGC(&agcStatus, ctrls);
 
@@ -862,7 +869,7 @@ void IPARPi::queueRequest(const ControlList &controls)
 
 		case controls::FRAME_DURATIONS: {
 			auto frameDurations = ctrl.second.get<Span<const int64_t>>();
-			applyFrameDurations(frameDurations[0], frameDurations[1]);
+			applyFrameDurations(frameDurations[0] * 1.0us, frameDurations[1] * 1.0us);
 			break;
 		}
 
@@ -937,9 +944,9 @@ void IPARPi::prepareISP(const ipa::RPi::ISPConfig &data)
 		returnEmbeddedBuffer(data.embeddedBufferId);
 
 	/* Allow a 10% margin on the comparison below. */
-	constexpr double eps = controllerMinFrameDuration * 1e3 * 0.1;
+	Duration delta = (frameTimestamp - lastRunTimestamp_) * 1.0ns;
 	if (lastRunTimestamp_ && frameCount_ > dropFrameCount_ &&
-	    frameTimestamp - lastRunTimestamp_ + eps < controllerMinFrameDuration * 1e3) {
+	    delta < controllerMinFrameDuration * 0.9) {
 		/*
 		 * Ensure we merge the previous frame's metadata with the current
 		 * frame. This will not overwrite exposure/gain values for the
@@ -1012,7 +1019,7 @@ void IPARPi::fillDeviceStatus(const ControlList &sensorControls)
 	int32_t exposureLines = sensorControls.get(V4L2_CID_EXPOSURE).get<int32_t>();
 	int32_t gainCode = sensorControls.get(V4L2_CID_ANALOGUE_GAIN).get<int32_t>();
 
-	deviceStatus.shutter_speed = helper_->Exposure(exposureLines);
+	deviceStatus.shutter_speed = DurationValue<std::micro>(helper_->Exposure(exposureLines));
 	deviceStatus.analogue_gain = helper_->Gain(gainCode);
 
 	LOG(IPARPI, Debug) << "Metadata - Exposure : "
@@ -1057,17 +1064,18 @@ void IPARPi::applyAWB(const struct AwbStatus *awbStatus, ControlList &ctrls)
 		  static_cast<int32_t>(awbStatus->gain_b * 1000));
 }
 
-void IPARPi::applyFrameDurations(double minFrameDuration, double maxFrameDuration)
+void IPARPi::applyFrameDurations(const Duration &minFrameDuration,
+				 const Duration &maxFrameDuration)
 {
-	const double minSensorFrameDuration = 1e-3 * mode_.min_frame_length * mode_.line_length;
-	const double maxSensorFrameDuration = 1e-3 * mode_.max_frame_length * mode_.line_length;
+	const Duration minSensorFrameDuration = mode_.min_frame_length * mode_.line_length;
+	const Duration maxSensorFrameDuration = mode_.max_frame_length * mode_.line_length;
 
 	/*
 	 * This will only be applied once AGC recalculations occur.
 	 * The values may be clamped based on the sensor mode capabilities as well.
 	 */
-	minFrameDuration_ = minFrameDuration ? minFrameDuration : defaultMaxFrameDuration;
-	maxFrameDuration_ = maxFrameDuration ? maxFrameDuration : defaultMinFrameDuration;
+	minFrameDuration_ = (minFrameDuration > 0.0s) ? minFrameDuration : defaultMaxFrameDuration;
+	maxFrameDuration_ = (maxFrameDuration > 0.0s) ? maxFrameDuration : defaultMinFrameDuration;
 	minFrameDuration_ = std::clamp(minFrameDuration_,
 				       minSensorFrameDuration, maxSensorFrameDuration);
 	maxFrameDuration_ = std::clamp(maxFrameDuration_,
@@ -1076,20 +1084,20 @@ void IPARPi::applyFrameDurations(double minFrameDuration, double maxFrameDuratio
 
 	/* Return the validated limits via metadata. */
 	libcameraMetadata_.set(controls::FrameDurations,
-			       { static_cast<int64_t>(minFrameDuration_),
-				 static_cast<int64_t>(maxFrameDuration_) });
+			       { static_cast<int64_t>(DurationValue<std::micro>(minFrameDuration_)),
+				 static_cast<int64_t>(DurationValue<std::micro>(minFrameDuration_)) });
 
 	/*
 	 * Calculate the maximum exposure time possible for the AGC to use.
 	 * GetVBlanking() will update maxShutter with the largest exposure
 	 * value possible.
 	 */
-	double maxShutter = std::numeric_limits<double>::max();
+	Duration maxShutter = Duration::max();
 	helper_->GetVBlanking(maxShutter, minFrameDuration_, maxFrameDuration_);
 
 	RPiController::AgcAlgorithm *agc = dynamic_cast<RPiController::AgcAlgorithm *>(
 		controller_.GetAlgorithm("agc"));
-	agc->SetMaxShutter(maxShutter);
+	agc->SetMaxShutter(DurationValue<std::micro>(maxShutter));
 }
 
 void IPARPi::applyAGC(const struct AgcStatus *agcStatus, ControlList &ctrls)
@@ -1097,9 +1105,8 @@ void IPARPi::applyAGC(const struct AgcStatus *agcStatus, ControlList &ctrls)
 	int32_t gainCode = helper_->GainCode(agcStatus->analogue_gain);
 
 	/* GetVBlanking might clip exposure time to the fps limits. */
-	double exposure = agcStatus->shutter_time;
-	int32_t vblanking = helper_->GetVBlanking(exposure, minFrameDuration_,
-						  maxFrameDuration_);
+	Duration exposure = agcStatus->shutter_time * 1.0us;
+	int32_t vblanking = helper_->GetVBlanking(exposure, minFrameDuration_, maxFrameDuration_);
 	int32_t exposureLines = helper_->ExposureLines(exposure);
 
 	LOG(IPARPI, Debug) << "Applying AGC Exposure: " << exposure

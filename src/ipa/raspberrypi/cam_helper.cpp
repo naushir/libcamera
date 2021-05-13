@@ -61,20 +61,21 @@ void CamHelper::Process([[maybe_unused]] StatisticsPtr &stats,
 {
 }
 
-uint32_t CamHelper::ExposureLines(double exposure_us) const
+uint32_t CamHelper::ExposureLines(Duration exposure) const
 {
 	assert(initialized_);
-	return exposure_us * 1000.0 / mode_.line_length;
+	return exposure / mode_.line_length;
 }
 
-double CamHelper::Exposure(uint32_t exposure_lines) const
+Duration CamHelper::Exposure(uint32_t exposure_lines) const
 {
 	assert(initialized_);
-	return exposure_lines * mode_.line_length / 1000.0;
+	return exposure_lines * mode_.line_length;
 }
 
-uint32_t CamHelper::GetVBlanking(double &exposure, double minFrameDuration,
-				 double maxFrameDuration) const
+uint32_t CamHelper::GetVBlanking(Duration &exposure,
+				 Duration minFrameDuration,
+				 Duration maxFrameDuration) const
 {
 	uint32_t frameLengthMin, frameLengthMax, vblank;
 	uint32_t exposureLines = ExposureLines(exposure);
@@ -85,8 +86,8 @@ uint32_t CamHelper::GetVBlanking(double &exposure, double minFrameDuration,
 	 * minFrameDuration and maxFrameDuration are clamped by the caller
 	 * based on the limits for the active sensor mode.
 	 */
-	frameLengthMin = 1e3 * minFrameDuration / mode_.line_length;
-	frameLengthMax = 1e3 * maxFrameDuration / mode_.line_length;
+	frameLengthMin = minFrameDuration / mode_.line_length;
+	frameLengthMax = maxFrameDuration / mode_.line_length;
 
 	/*
 	 * Limit the exposure to the maximum frame duration requested, and
@@ -182,7 +183,7 @@ void CamHelper::parseEmbeddedData(Span<const uint8_t> buffer,
 		return;
 	}
 
-	deviceStatus.shutter_speed = Exposure(exposureLines);
+	deviceStatus.shutter_speed = DurationValue<std::micro>(Exposure(exposureLines));
 	deviceStatus.analogue_gain = Gain(gainCode);
 
 	LOG(IPARPI, Debug) << "Metadata updated - Exposure : "
