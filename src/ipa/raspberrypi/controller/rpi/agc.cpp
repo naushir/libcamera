@@ -21,6 +21,7 @@
 
 using namespace RPiController;
 using namespace libcamera;
+using namespace std::literals::chrono_literals;
 
 LOG_DEFINE_CATEGORY(RPiAgc)
 
@@ -55,19 +56,27 @@ read_metering_modes(std::map<std::string, AgcMeteringMode> &metering_modes,
 	return first;
 }
 
-static int read_double_list(std::vector<double> &list,
-			    boost::property_tree::ptree const &params)
+static int read_list(std::vector<double> &list,
+		     boost::property_tree::ptree const &params)
 {
 	for (auto &p : params)
 		list.push_back(p.second.get_value<double>());
 	return list.size();
 }
 
+static int read_list(std::vector<Duration> &list,
+		     boost::property_tree::ptree const &params)
+{
+	for (auto &p : params)
+		list.push_back(p.second.get_value<double>() * 1us);
+	return list.size();
+}
+
 void AgcExposureMode::Read(boost::property_tree::ptree const &params)
 {
 	int num_shutters =
-		read_double_list(shutter, params.get_child("shutter"));
-	int num_ags = read_double_list(gain, params.get_child("gain"));
+		read_list(shutter, params.get_child("shutter"));
+	int num_ags = read_list(gain, params.get_child("gain"));
 	if (num_shutters < 2 || num_ags < 2)
 		throw std::runtime_error(
 			"AgcConfig: must have at least two entries in exposure profile");
@@ -147,7 +156,7 @@ void AgcConfig::Read(boost::property_tree::ptree const &params)
 		params.get<double>("fast_reduce_threshold", 0.4);
 	base_ev = params.get<double>("base_ev", 1.0);
 	// Start with quite a low value as ramping up is easier than ramping down.
-	default_exposure_time = params.get<double>("default_exposure_time", 1000);
+	default_exposure_time = params.get<double>("default_exposure_time", 1000) * 1us;
 	default_analogue_gain = params.get<double>("default_analogue_gain", 1.0);
 }
 
@@ -157,7 +166,7 @@ Agc::Agc(Controller *controller)
 	  frame_count_(0), lock_count_(0),
 	  last_target_exposure_(0.0),
 	  ev_(1.0), flicker_period_(0.0),
-	  max_shutter_(0), fixed_shutter_(0), fixed_analogue_gain_(0.0)
+	  max_shutter_(0.0s), fixed_shutter_(0.0s), fixed_analogue_gain_(0.0)
 {
 	memset(&awb_, 0, sizeof(awb_));
 	// Setting status_.total_exposure_value_ to zero initially tells us
@@ -203,7 +212,7 @@ void Agc::Pause()
 
 void Agc::Resume()
 {
-	fixed_shutter_ = 0;
+	fixed_shutter_ = 0.0s;
 	fixed_analogue_gain_ = 0;
 }
 
@@ -211,7 +220,7 @@ unsigned int Agc::GetConvergenceFrames() const
 {
 	// If shutter and gain have been explicitly set, there is no
 	// convergence to happen, so no need to drop any frames - return zero.
-	if (fixed_shutter_ && fixed_analogue_gain_)
+	if (fixed_shutter_ > 0.0s && fixed_analogue_gain_)
 		return 0;
 	else
 		return config_.convergence_frames;
@@ -224,17 +233,17 @@ void Agc::SetEv(double ev)
 
 void Agc::SetFlickerPeriod(Duration flicker_period)
 {
-	flicker_period_ = DurationValue<std::micro>(flicker_period);
+	flicker_period_ = flicker_period;
 }
 
 void Agc::SetMaxShutter(Duration max_shutter)
 {
-	max_shutter_ = DurationValue<std::micro>(max_shutter);
+	max_shutter_ = max_shutter;
 }
 
 void Agc::SetFixedShutter(Duration fixed_shutter)
 {
-	fixed_shutter_ = DurationValue<std::micro>(fixed_shutter);
+	fixed_shutter_ = fixed_shutter;
 	// Set this in case someone calls Pause() straight after.
 	status_.shutter_time = clipShutter(fixed_shutter_);
 }
@@ -266,8 +275,8 @@ void Agc::SwitchMode([[maybe_unused]] CameraMode const &camera_mode,
 {
 	housekeepConfig();
 
-	double fixed_shutter = clipShutter(fixed_shutter_);
-	if (fixed_shutter != 0.0 && fixed_analogue_gain_ != 0.0) {
+	Duration fixed_shutter = clipShutter(fixed_shutter_);
+	if (fixed_shutter != 0.0s && fixed_analogue_gain_ != 0.0) {
 		// We're going to reset the algorithm here with these fixed values.
 
 		fetchAwbStatus(metadata);
@@ -284,7 +293,7 @@ void Agc::SwitchMode([[maybe_unused]] CameraMode const &camera_mode,
 		// Equivalent of divideUpExposure.
 		filtered_.shutter = fixed_shutter;
 		filtered_.analogue_gain = fixed_analogue_gain_;
-	} else if (status_.total_exposure_value) {
+	} else if (status_.total_exposure_value > 0.0s) {
 		// On a mode switch, it's possible the exposure profile could change,
 		// or a fixed exposure/gain might be set so we divide up the exposure/
 		// gain again, but we don't change any target values.
@@ -296,7 +305,7 @@ void Agc::SwitchMode([[maybe_unused]] CameraMode const &camera_mode,
 		// for any that weren't set.
 
 		// Equivalent of divideUpExposure.
-		filtered_.shutter = fixed_shutter ? fixed_shutter : config_.default_exposure_time;
+		filtered_.shutter = fixed_shutter > 0.0s ? fixed_shutter : config_.default_exposure_time;
 		filtered_.analogue_gain = fixed_analogue_gain_ ? fixed_analogue_gain_ : config_.default_analogue_gain;
 	}
 
@@ -308,13 +317,12 @@ void Agc::Prepare(Metadata *image_metadata)
 	status_.digital_gain = 1.0;
 	fetchAwbStatus(image_metadata); // always fetch it so that Process knows it's been done
 
-	if (status_.total_exposure_value) {
+	if (status_.total_exposure_value > 0.0s) {
 		// Process has run, so we have meaningful values.
 		DeviceStatus device_status;
 		if (image_metadata->Get("device.status", device_status) == 0) {
-			double actual_exposure = device_status.shutter_speed *
-						 device_status.analogue_gain;
-			if (actual_exposure) {
+			Duration actual_exposure = device_status.shutter_speed * device_status.analogue_gain;
+			if (actual_exposure > 0.0s) {
 				status_.digital_gain =
 					status_.total_exposure_value /
 					actual_exposure;
@@ -370,9 +378,9 @@ void Agc::updateLockStatus(DeviceStatus const &device_status)
 	const double RESET_MARGIN = 1.5;
 
 	// Add 200us to the exposure time error to allow for line quantisation.
-	double exposure_error = last_device_status_.shutter_speed * ERROR_FACTOR + 200;
+	Duration exposure_error = last_device_status_.shutter_speed * ERROR_FACTOR + 200us;
 	double gain_error = last_device_status_.analogue_gain * ERROR_FACTOR;
-	double target_error = last_target_exposure_ * ERROR_FACTOR;
+	Duration target_error = last_target_exposure_ * ERROR_FACTOR;
 
 	// Note that we don't know the exposure/gain limits of the sensor, so
 	// the values we keep requesting may be unachievable. For this reason
@@ -462,7 +470,7 @@ void Agc::fetchCurrentExposure(Metadata *image_metadata)
 	current_.analogue_gain = device_status->analogue_gain;
 	AgcStatus *agc_status =
 		image_metadata->GetLocked<AgcStatus>("agc.status");
-	current_.total_exposure = agc_status ? agc_status->total_exposure_value : 0;
+	current_.total_exposure = agc_status ? agc_status->total_exposure_value : 0s;
 	current_.total_exposure_no_dg = current_.shutter * current_.analogue_gain;
 }
 
@@ -573,7 +581,7 @@ void Agc::computeGain(bcm2835_isp_stats *statistics, Metadata *image_metadata,
 
 void Agc::computeTargetExposure(double gain)
 {
-	if (status_.fixed_shutter != 0.0 && status_.fixed_analogue_gain != 0.0) {
+	if (status_.fixed_shutter != 0.0s && status_.fixed_analogue_gain != 0.0) {
 		// When ag and shutter are both fixed, we need to drive the
 		// total exposure so that we end up with a digital gain of at least
 		// 1/min_colour_gain. Otherwise we'd desaturate channels causing
@@ -588,11 +596,11 @@ void Agc::computeTargetExposure(double gain)
 		target_.total_exposure = current_.total_exposure_no_dg * gain;
 		// The final target exposure is also limited to what the exposure
 		// mode allows.
-		double max_shutter = status_.fixed_shutter != 0.0
+		Duration max_shutter = status_.fixed_shutter != 0.0s
 				   ? status_.fixed_shutter
 				   : exposure_mode_->shutter.back();
 		max_shutter = clipShutter(max_shutter);
-		double max_total_exposure =
+		Duration max_total_exposure =
 			max_shutter *
 			(status_.fixed_analogue_gain != 0.0
 				 ? status_.fixed_analogue_gain
@@ -634,10 +642,10 @@ void Agc::filterExposure(bool desaturate)
 	double speed = config_.speed;
 	// AGC adapts instantly if both shutter and gain are directly specified
 	// or we're in the startup phase.
-	if ((status_.fixed_shutter && status_.fixed_analogue_gain) ||
+	if ((status_.fixed_shutter > 0.0s && status_.fixed_analogue_gain) ||
 	    frame_count_ <= config_.startup_frames)
 		speed = 1.0;
-	if (filtered_.total_exposure == 0.0) {
+	if (filtered_.total_exposure == 0.0s) {
 		filtered_.total_exposure = target_.total_exposure;
 		filtered_.total_exposure_no_dg = target_.total_exposure_no_dg;
 	} else {
@@ -674,9 +682,10 @@ void Agc::divideUpExposure()
 	// Sending the fixed shutter/gain cases through the same code may seem
 	// unnecessary, but it will make more sense when extend this to cover
 	// variable aperture.
-	double exposure_value = filtered_.total_exposure_no_dg;
-	double shutter_time, analogue_gain;
-	shutter_time = status_.fixed_shutter != 0.0
+	Duration exposure_value = filtered_.total_exposure_no_dg;
+	Duration shutter_time;
+	double analogue_gain;
+	shutter_time = status_.fixed_shutter != 0.0s
 			       ? status_.fixed_shutter
 			       : exposure_mode_->shutter[0];
 	shutter_time = clipShutter(shutter_time);
@@ -686,8 +695,8 @@ void Agc::divideUpExposure()
 	if (shutter_time * analogue_gain < exposure_value) {
 		for (unsigned int stage = 1;
 		     stage < exposure_mode_->gain.size(); stage++) {
-			if (status_.fixed_shutter == 0.0) {
-				double stage_shutter =
+			if (status_.fixed_shutter == 0.0s) {
+				Duration stage_shutter =
 					clipShutter(exposure_mode_->shutter[stage]);
 				if (stage_shutter * analogue_gain >=
 				    exposure_value) {
@@ -713,12 +722,12 @@ void Agc::divideUpExposure()
 			   << analogue_gain;
 	// Finally adjust shutter time for flicker avoidance (require both
 	// shutter and gain not to be fixed).
-	if (status_.fixed_shutter == 0.0 &&
+	if (status_.fixed_shutter == 0.0s &&
 	    status_.fixed_analogue_gain == 0.0 &&
-	    status_.flicker_period != 0.0) {
-		int flicker_periods = shutter_time / status_.flicker_period;
-		if (flicker_periods > 0) {
-			double new_shutter_time = flicker_periods * status_.flicker_period;
+	    status_.flicker_period != 0.0s) {
+		double flicker_periods = shutter_time / status_.flicker_period;
+		if (flicker_periods > 0.0) {
+			Duration new_shutter_time = flicker_periods * status_.flicker_period;
 			analogue_gain *= shutter_time / new_shutter_time;
 			// We should still not allow the ag to go over the
 			// largest value in the exposure mode. Note that this
@@ -738,7 +747,7 @@ void Agc::divideUpExposure()
 void Agc::writeAndFinish(Metadata *image_metadata, bool desaturate)
 {
 	status_.total_exposure_value = filtered_.total_exposure;
-	status_.target_exposure_value = desaturate ? 0 : target_.total_exposure_no_dg;
+	status_.target_exposure_value = desaturate ? 0s : target_.total_exposure_no_dg;
 	status_.shutter_time = filtered_.shutter;
 	status_.analogue_gain = filtered_.analogue_gain;
 	// Write to metadata as well, in case anyone wants to update the camera
@@ -750,9 +759,9 @@ void Agc::writeAndFinish(Metadata *image_metadata, bool desaturate)
 			   << " analogue gain " << filtered_.analogue_gain;
 }
 
-double Agc::clipShutter(double shutter)
+Duration Agc::clipShutter(Duration shutter)
 {
-	if (max_shutter_)
+	if (max_shutter_ > 0.0s)
 		shutter = std::min(shutter, max_shutter_);
 	return shutter;
 }
