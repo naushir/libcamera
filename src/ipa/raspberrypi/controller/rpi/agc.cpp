@@ -222,19 +222,19 @@ void Agc::SetEv(double ev)
 	ev_ = ev;
 }
 
-void Agc::SetFlickerPeriod(double flicker_period)
+void Agc::SetFlickerPeriod(Duration flicker_period)
 {
-	flicker_period_ = flicker_period;
+	flicker_period_ = DurationValue<std::micro>(flicker_period);
 }
 
-void Agc::SetMaxShutter(double max_shutter)
+void Agc::SetMaxShutter(Duration max_shutter)
 {
-	max_shutter_ = max_shutter;
+	max_shutter_ = DurationValue<std::micro>(max_shutter);
 }
 
-void Agc::SetFixedShutter(double fixed_shutter)
+void Agc::SetFixedShutter(Duration fixed_shutter)
 {
-	fixed_shutter_ = fixed_shutter;
+	fixed_shutter_ = DurationValue<std::micro>(fixed_shutter);
 	// Set this in case someone calls Pause() straight after.
 	status_.shutter_time = clipShutter(fixed_shutter_);
 }

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "algorithm.hpp"
+#include "duration.hpp"
 
 namespace RPiController {
 
@@ -17,9 +18,9 @@ public:
 	// An AGC algorithm must provide the following:
 	virtual unsigned int GetConvergenceFrames() const = 0;
 	virtual void SetEv(double ev) = 0;
-	virtual void SetFlickerPeriod(double flicker_period) = 0;
-	virtual void SetFixedShutter(double fixed_shutter) = 0; // microseconds
-	virtual void SetMaxShutter(double max_shutter) = 0; // microseconds
+	virtual void SetFlickerPeriod(Duration flicker_period) = 0;
+	virtual void SetFixedShutter(Duration fixed_shutter) = 0;
+	virtual void SetMaxShutter(Duration max_shutter) = 0;
 	virtual void SetFixedAnalogueGain(double fixed_analogue_gain) = 0;
 	virtual void SetMeteringMode(std::string const &metering_mode_name) = 0;
 	virtual void SetExposureMode(std::string const &exposure_mode_name) = 0;
