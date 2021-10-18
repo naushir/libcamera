@@ -50,6 +50,7 @@ namespace {
 
 /* Map of mbus codes to supported sizes reported by the sensor. */
 using SensorFormats = std::map<unsigned int, std::vector<Size>>;
+using SensorMode = std::pair<PixelFormat, Size>;
 
 SensorFormats populateSensorFormats(std::unique_ptr<CameraSensor> &sensor)
 {
@@ -59,6 +60,34 @@ SensorFormats populateSensorFormats(std::unique_ptr<CameraSensor> &sensor)
 		formats.emplace(mbusCode, sensor->sizes(mbusCode));
 
 	return formats;
+}
+
+inline V4L2DeviceFormat toV4L2DeviceFormat(SensorMode &mode)
+{
+	V4L2DeviceFormat deviceFormat;
+
+	deviceFormat.fourcc = V4L2PixelFormat::fromPixelFormat(mode.first);
+	deviceFormat.size = mode.second;
+	return deviceFormat;
+}
+
+inline V4L2DeviceFormat toV4L2DeviceFormat(V4L2SubdeviceFormat &format)
+{
+	V4L2DeviceFormat deviceFormat;
+
+	deviceFormat.fourcc = BayerFormat::fromMbusCode(format.mbus_code).toV4L2PixelFormat();
+	deviceFormat.size = format.size;
+	return deviceFormat;
+}
+
+inline V4L2SubdeviceFormat toV4L2SubdeviceFormat(SensorMode &mode)
+{
+	V4L2SubdeviceFormat subdeviceFormat;
+	V4L2PixelFormat fourcc = V4L2PixelFormat::fromPixelFormat(mode.first);
+
+	subdeviceFormat.mbus_code = BayerFormat::fromV4L2PixelFormat(fourcc).toMbusCode();
+	subdeviceFormat.size = mode.second;
+	return subdeviceFormat;
 }
 
 bool isRaw(PixelFormat &pixFmt)
@@ -87,10 +116,10 @@ double scoreFormat(double desired, double actual)
 	return score;
 }
 
-V4L2DeviceFormat findBestMode(const SensorFormats &formatsMap, const Size &req)
+SensorMode findBestMode(const SensorFormats &formatsMap, const Size &req)
 {
 	double bestScore = std::numeric_limits<double>::max(), score;
-	V4L2DeviceFormat bestMode;
+	SensorMode bestMode;
 
 #define PENALTY_AR		1500.0
 #define PENALTY_8BIT		2000.0
@@ -101,8 +130,8 @@ V4L2DeviceFormat findBestMode(const SensorFormats &formatsMap, const Size &req)
 	/* Calculate the closest/best mode from the user requested size. */
 	for (const auto &iter : formatsMap) {
 		const unsigned int mbus_code = iter.first;
-		const V4L2PixelFormat v4l2Format = BayerFormat::fromMbusCode(mbus_code).toV4L2PixelFormat();
-		const PixelFormatInfo &info = PixelFormatInfo::info(v4l2Format);
+		const PixelFormat format = BayerFormat::fromMbusCode(mbus_code).toPixelFormat();
+		const PixelFormatInfo &info = PixelFormatInfo::info(format);
 
 		for (const Size &sz : iter.second) {
 			double reqAr = static_cast<double>(req.width) / req.height;
@@ -126,12 +155,12 @@ V4L2DeviceFormat findBestMode(const SensorFormats &formatsMap, const Size &req)
 
 			if (score <= bestScore) {
 				bestScore = score;
-				bestMode.fourcc = v4l2Format;
-				bestMode.size = sz;
+				bestMode.first = format;
+				bestMode.second = sz;
 			}
 
 			LOG(RPI, Info) << "Mode: " << sz.width << "x" << sz.height
-				       << " fmt " << v4l2Format.toString()
+				       << " fmt " << format.toString()
 				       << " Score: " << score
 				       << " (best " << bestScore << ")";
 		}
@@ -364,8 +393,9 @@ CameraConfiguration::Status RPiCameraConfiguration::validate()
 			 * Calculate the best sensor mode we can use based on
 			 * the user request.
 			 */
-			V4L2DeviceFormat sensorFormat = findBestMode(data_->sensorFormats_, cfg.size);
-			int ret = data_->unicam_[Unicam::Image].dev()->tryFormat(&sensorFormat);
+			SensorMode sensorMode = findBestMode(data_->sensorFormats_, cfg.size);
+			V4L2DeviceFormat unicamFormat = toV4L2DeviceFormat(sensorMode);
+			int ret = data_->unicam_[Unicam::Image].dev()->tryFormat(&unicamFormat);
 			if (ret)
 				return Invalid;
 
@@ -377,7 +407,7 @@ CameraConfiguration::Status RPiCameraConfiguration::validate()
 			 * fetch the "native" (i.e. untransformed) Bayer order,
 			 * because the sensor may currently be flipped!
 			 */
-			V4L2PixelFormat fourcc = sensorFormat.fourcc;
+			V4L2PixelFormat fourcc = unicamFormat.fourcc;
 			if (data_->flipsAlterBayerOrder_) {
 				BayerFormat bayer = BayerFormat::fromV4L2PixelFormat(fourcc);
 				bayer.order = data_->nativeBayerOrder_;
@@ -386,15 +416,15 @@ CameraConfiguration::Status RPiCameraConfiguration::validate()
 			}
 
 			PixelFormat sensorPixFormat = fourcc.toPixelFormat();
-			if (cfg.size != sensorFormat.size ||
+			if (cfg.size != unicamFormat.size ||
 			    cfg.pixelFormat != sensorPixFormat) {
-				cfg.size = sensorFormat.size;
+				cfg.size = unicamFormat.size;
 				cfg.pixelFormat = sensorPixFormat;
 				status = Adjusted;
 			}
 
-			cfg.stride = sensorFormat.planes[0].bpl;
-			cfg.frameSize = sensorFormat.planes[0].size;
+			cfg.stride = unicamFormat.planes[0].bpl;
+			cfg.frameSize = unicamFormat.planes[0].size;
 
 			rawCount++;
 		} else {
@@ -483,7 +513,8 @@ CameraConfiguration *PipelineHandlerRPi::generateConfiguration(Camera *camera,
 {
 	RPiCameraData *data = cameraData(camera);
 	CameraConfiguration *config = new RPiCameraConfiguration(data);
-	V4L2DeviceFormat sensorFormat;
+	V4L2DeviceFormat unicamFormat;
+	SensorMode sensorMode;
 	unsigned int bufferCount;
 	PixelFormat pixelFormat;
 	V4L2VideoDevice::Formats fmts;
@@ -498,8 +529,9 @@ CameraConfiguration *PipelineHandlerRPi::generateConfiguration(Camera *camera,
 		switch (role) {
 		case StreamRole::Raw:
 			size = data->sensor_->resolution();
-			sensorFormat = findBestMode(data->sensorFormats_, size);
-			pixelFormat = sensorFormat.fourcc.toPixelFormat();
+			sensorMode = findBestMode(data->sensorFormats_, size);
+			unicamFormat = toV4L2DeviceFormat(sensorMode);
+			pixelFormat = sensorMode.first;
 			ASSERT(pixelFormat.isValid());
 			bufferCount = 2;
 			rawCount++;
@@ -609,10 +641,9 @@ int PipelineHandlerRPi::configure(Camera *camera, CameraConfiguration *config)
 	}
 
 	/* First calculate the best sensor mode we can use based on the user request. */
-	V4L2DeviceFormat unicamFormat = findBestMode(data->sensorFormats_, rawStream ? sensorSize : maxSize);
-
-	unsigned int mbus_code = BayerFormat::fromV4L2PixelFormat(unicamFormat.fourcc).toMbusCode();
-	V4L2SubdeviceFormat sensorFormat { .mbus_code = mbus_code, .size = unicamFormat.size };
+	SensorMode sensorMode = findBestMode(data->sensorFormats_, rawStream ? sensorSize : maxSize);
+	V4L2SubdeviceFormat sensorFormat = toV4L2SubdeviceFormat(sensorMode);
+	V4L2DeviceFormat unicamFormat = toV4L2DeviceFormat(sensorMode);
 
 	ret = data->sensor_->setFormat(&sensorFormat);
 	if (ret)
