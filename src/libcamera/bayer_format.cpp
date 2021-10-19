@@ -13,6 +13,7 @@
 
 #include <linux/media-bus-format.h>
 
+#include <libcamera/pixel_format.h>
 #include <libcamera/transform.h>
 
 /**
@@ -170,6 +171,24 @@ const std::unordered_map<unsigned int, BayerFormat> mbusCodeToBayer{
  */
 
 /**
+ * \brief Retrieve the media bus code associated with a BayerFormat
+ *
+ * The media bus code numeric identifiers are defined by the V4L2 specification.
+ */
+unsigned int BayerFormat::toMbusCode() const
+{
+	const auto it = std::find_if(mbusCodeToBayer.begin(), mbusCodeToBayer.end(),
+				     [this](const auto &p) {
+					     return p.second == *this;
+				     });
+
+	if (it == mbusCodeToBayer.end())
+		return it->first;
+
+	return 0;
+}
+
+/**
  * \brief Retrieve the BayerFormat associated with a media bus code
  * \param[in] mbusCode The media bus code to convert into a BayerFormat
  *
@@ -267,6 +286,19 @@ BayerFormat BayerFormat::fromV4L2PixelFormat(V4L2PixelFormat v4l2Format)
 		return it->first;
 
 	return BayerFormat();
+}
+
+/**
+ * \brief Convert a BayerFormat into the corresponding PixelFormat
+ * \return The PixelFormat corresponding to this BayerFormat
+ */
+PixelFormat BayerFormat::toPixelFormat() const
+{
+	const auto it = bayerToV4l2.find(*this);
+	if (it != bayerToV4l2.end())
+		return PixelFormat(it->second);
+
+	return PixelFormat();
 }
 
 /**

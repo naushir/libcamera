@@ -43,6 +43,7 @@ public:
 	{
 	}
 
+	unsigned int toMbusCode() const;
 	static const BayerFormat &fromMbusCode(unsigned int mbusCode);
 	bool isValid() const { return bitDepth != 0; }
 
@@ -50,6 +51,7 @@ public:
 
 	V4L2PixelFormat toV4L2PixelFormat() const;
 	static BayerFormat fromV4L2PixelFormat(V4L2PixelFormat v4l2Format);
+	PixelFormat toPixelFormat() const;
 	BayerFormat transform(Transform t) const;
 
 	Order order;
