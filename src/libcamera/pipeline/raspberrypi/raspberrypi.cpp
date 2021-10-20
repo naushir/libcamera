@@ -125,7 +125,6 @@ SensorMode findBestMode(const SensorFormats &formatsMap, const Size &req)
 #define PENALTY_8BIT		2000.0
 #define PENALTY_10BIT		1000.0
 #define PENALTY_12BIT		   0.0
-#define PENALTY_UNPACKED	 500.0
 
 	/* Calculate the closest/best mode from the user requested size. */
 	for (const auto &iter : formatsMap) {
@@ -143,9 +142,6 @@ SensorMode findBestMode(const SensorFormats &formatsMap, const Size &req)
 			score += PENALTY_AR * scoreFormat(reqAr, modeAr);
 
 			/* Add any penalties... this is not an exact science! */
-			if (!info.packed)
-				score += PENALTY_UNPACKED;
-
 			if (info.bitsPerPixel == 12)
 				score += PENALTY_12BIT;
 			else if (info.bitsPerPixel == 10)
