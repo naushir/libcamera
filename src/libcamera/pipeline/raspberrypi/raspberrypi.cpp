@@ -194,8 +194,6 @@ public:
 	int loadIPA(ipa::RPi::SensorConfig *sensorConfig);
 	int configureIPA(const CameraConfiguration *config);
 
-	void enumerateVideoDevices(MediaLink *link);
-
 	void statsMetadataComplete(uint32_t bufferId, const ControlList &controls);
 	void runIsp(uint32_t bufferId);
 	void embeddedComplete(uint32_t bufferId);
@@ -320,7 +318,7 @@ private:
 		return static_cast<RPiCameraData *>(camera->_d());
 	}
 
-	int registerCamera(MediaDevice *unicam, MediaDevice *isp, MediaEntity *sensorEntity);
+	int registerCamera(MediaDevice *unicam, MediaDevice *isp, const MediaDevice::MediaWalk &walk);
 	int queueAllBuffers(Camera *camera);
 	int prepareBuffers(Camera *camera);
 	void freeBuffers(Camera *camera);
@@ -1109,30 +1107,34 @@ bool PipelineHandlerRPi::match(DeviceEnumerator *enumerator)
 		return false;
 	}
 
+	std::vector<MediaDevice::MediaWalk> walks = unicamDevice->enumerateMediaWalks();
+
 	/*
 	 * The loop below is used to register multiple cameras behind one or more
 	 * video mux devices that are attached to a particular Unicam instance.
 	 * Obviously these cameras cannot be used simultaneously.
 	 */
 	unsigned int numCameras = 0;
-	for (MediaEntity *entity : unicamDevice->entities()) {
-		if (entity->function() != MEDIA_ENT_F_CAM_SENSOR)
-			continue;
+	for (const MediaDevice::MediaWalk &walk : walks) {
+		MediaEntity *sensorEntity = walk.front().entity;
 
-		int ret = registerCamera(unicamDevice, ispDevice, entity);
-		if (ret)
+		int ret = registerCamera(unicamDevice, ispDevice, walk);
+		if (ret) {
 			LOG(RPI, Error) << "Failed to register camera "
-					<< entity->name() << ": " << ret;
-		else
-			numCameras++;
+					<< sensorEntity->name() << ": " << ret;
+			continue;
+		}
+
+		numCameras++;
 	}
 
 	return !!numCameras;
 }
 
-int PipelineHandlerRPi::registerCamera(MediaDevice *unicam, MediaDevice *isp, MediaEntity *sensorEntity)
+int PipelineHandlerRPi::registerCamera(MediaDevice *unicam, MediaDevice *isp, const MediaDevice::MediaWalk &walk)
 {
 	std::unique_ptr<RPiCameraData> data = std::make_unique<RPiCameraData>(this);
+	MediaEntity *sensorEntity = walk.front().entity;
 
 	if (!data->dmaHeap_.isValid())
 		return -ENOMEM;
@@ -1178,12 +1180,24 @@ int PipelineHandlerRPi::registerCamera(MediaDevice *unicam, MediaDevice *isp, Me
 	if (data->sensor_->init())
 		return -EINVAL;
 
-	/*
-	 * Enumerate all the Video Mux/Bridge devices across the sensor -> unicam
-	 * link. There may be a cascade of devices in this link!
-	 */
-	MediaLink *link = sensorEntity->getPadByIndex(0)->links()[0];
-	data->enumerateVideoDevices(link);
+	/* See if we can auto configure this MC graph. */
+	for (auto it = walk.begin() + 1; it < walk.end() - 1; ++it) {
+		MediaEntity *entity = it->entity;
+		MediaLink *sinkLink = it->sinkLink;
+
+		/* We only deal with Video Mux and Bridge devices in cascade. */
+		if (entity->function() != MEDIA_ENT_F_VID_MUX &&
+		    entity->function() != MEDIA_ENT_F_VID_IF_BRIDGE) {
+			data->bridgeDevices_.clear();
+			break;
+		}
+
+		LOG(RPI, Info) << "Found video mux/bridge device " << entity->name()
+			       << " linked to sink pad " << sinkLink->sink()->index();
+
+		data->bridgeDevices_.emplace_back(std::make_unique<V4L2Subdevice>(entity), sinkLink);
+		data->bridgeDevices_.back().first->open();
+	}
 
 	data->sensorFormats_ = populateSensorFormats(data->sensor_);
 
@@ -1532,98 +1546,6 @@ int RPiCameraData::configureIPA(const CameraConfiguration *config)
 		setSensorControls(controls);
 
 	return 0;
-}
-
-/*
- * enumerateVideoDevices() iterates over the Media Controller topology, starting
- * at the sensor and finishing at Unicam. For each sensor, RPiCameraData stores
- * a unique list of any intermediate video mux or bridge devices connected in a
- * cascade, together with the entity to entity link.
- *
- * Entity pad configuration and link enabling happens at the end of configure().
- * We first disables all pad links on each entity device in the chain, and then
- * selectively enabling the specific links to link sensor to Unicam across all
- * intermediate muxes and bridges.
- *
- * In the cascaded topology below, if Sensor1 is used, the Mux2 -> Mux1 link
- * will be disabled, and Sensor1 -> Mux1 -> Unicam links enabled. Alternatively,
- * if Sensor3 is used, the Sensor2 -> Mux2 and Sensor1 -> Mux1 links are disabled,
- * and Sensor3 -> Mux2 -> Mux1 -> Unicam links are enabled. All other links will
- * remain unchanged.
- *
- *  +----------+
- *  |  Unicam  |
- *  +-----^----+
- *        |
- *    +---+---+
- *    |  Mux1 <-------+
- *    +--^----+       |
- *       |            |
- * +-----+---+    +---+---+
- * | Sensor1 |    |  Mux2 |<--+
- * +---------+    +-^-----+   |
- *                  |         |
- *          +-------+-+   +---+-----+
- *          | Sensor2 |   | Sensor3 |
- *          +---------+   +---------+
- */
-void RPiCameraData::enumerateVideoDevices(MediaLink *link)
-{
-	const MediaPad *sinkPad = link->sink();
-	const MediaEntity *entity = sinkPad->entity();
-	bool unicamFound = false;
-
-	/* We only deal with Video Mux and Bridge devices in cascade. */
-	if (entity->function() != MEDIA_ENT_F_VID_MUX &&
-	    entity->function() != MEDIA_ENT_F_VID_IF_BRIDGE)
-		return;
-
-	/* Find the source pad for this Video Mux or Bridge device. */
-	const MediaPad *entitySourcePad = nullptr;
-	for (const MediaPad *pad : entity->pads()) {
-		if (pad->flags() & MEDIA_PAD_FL_SOURCE) {
-			/*
-			 * We can only deal with devices that have a single source
-			 * pad. If this device has multple source pads, ignore it
-			 * and this branch in the cascade.
-			 */
-			if (entitySourcePad)
-				return;
-
-			entitySourcePad = pad;
-		}
-	}
-
-	LOG(RPI, Info) << "Found video mux device " << entity->name()
-		       << " linked to sink pad " << sinkPad->index();
-
-	bridgeDevices_.emplace_back(std::make_unique<V4L2Subdevice>(entity), link);
-	bridgeDevices_.back().first->open();
-
-	/*
-	 * Iterate through all the sink pad links down the cascade to find any
-	 * other Video Mux and Bridge devices.
-	 */
-	for (MediaLink *l : entitySourcePad->links()) {
-		enumerateVideoDevices(l);
-		/* Once we reach the Unicam entity, we are done. */
-		if (l->sink()->entity()->name() == "unicam-image") {
-			unicamFound = true;
-			break;
-		}
-	}
-
-	/* This identifies the end of our entity enumeration recursion. */
-	if (link->source()->entity()->function() == MEDIA_ENT_F_CAM_SENSOR) {
-		/*
-		* If Unicam is not at the end of this cascade, we cannot configure
-		* this topology automatically, so remove all entity references.
-		*/
-		if (!unicamFound) {
-			LOG(RPI, Warning) << "Cannot automatically configure this MC topology!";
-			bridgeDevices_.clear();
-		}
-	}
 }
 
 void RPiCameraData::statsMetadataComplete(uint32_t bufferId, const ControlList &controls)
