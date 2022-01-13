@@ -342,6 +342,105 @@ MediaEntity *MediaDevice::getEntityByName(const std::string &name) const
 }
 
 /**
+ * \fn MediaDevice::enumerateMediaWalks()
+ * \brief Retrieve the list of all possible MediaWalks available to this device
+ *
+ * Enumerate the media graph and return all possible permutations of unique
+ * sub-graphs where the first entity is a sensor device. These sub-graphs are
+ * stored as a \a MediaDevice::MediaWalk structure, where each element gives the
+ * device entity and associated sink pad link. The first entity in this structure
+ * is asensor device, with the sink pad link set to a nullptr.
+ *
+ * As an example, consider the media graph below:
+ *
+ *  +----------+
+ *  |   CSI2   |
+ *  +-----^----+
+ *        |
+ *    +---+---+
+ *    |  Mux1 <-------+
+ *    +--^----+       |
+ *       |            |
+ * +-----+---+    +---+---+
+ * | Sensor1 |    |  Mux2 |<--+
+ * +---------+    +-^-----+   |
+ *                  |         |
+ *          +-------+-+   +---+-----+
+ *          | Sensor2 |   | Sensor3 |
+ *          +---------+   +---------+
+ *
+ * This would return three \a MediaDevice::MediaWalk structures looking like:
+ *
+ * 1)
+ * +----------+
+ * |   CSI2   |
+ * +-----^----+
+ *       |
+ * +-----+----+
+ * |   Mux1   |
+ * +-----^----+
+ *       |
+ * +-----+----+
+ * | Sensor1  |
+ * +----------+
+ *
+ * 2)
+ * +----------+
+ * |   CSI2   |
+ * +-----^----+
+ *       |
+ * +-----+----+
+ * |   Mux1   |
+ * +-----^----+
+ *       |
+ * +-----+----+
+ * |   Mux2   |
+ * +-----^----+
+ *       |
+ * +-----+----+
+ * | Sensor2  |
+ * +----------+
+ *
+ * 3)
+ * +----------+
+ * |   CSI2   |
+ * +-----^----+
+ *       |
+ * +-----+----+
+ * |   Mux1   |
+ * +-----^----+
+ *       |
+ * +-----+----+
+ * |   Mux2   |
+ * +-----^----+
+ *       |
+ * +-----+----+
+ * | Sensor3  |
+ * +----------+
+ *
+ * \return A vector of MediaWalk structures available
+ */
+std::vector<MediaDevice::MediaWalk> MediaDevice::enumerateMediaWalks() const
+{
+	std::vector<MediaWalk> mediaWalks;
+
+	for (MediaEntity *entity : entities_) {
+		/* Only perform enumeration starting with sensor entities */
+		if (entity->function() != MEDIA_ENT_F_CAM_SENSOR)
+			continue;
+		/*
+		 * Start with an empty MediaWalk structure, and walk the graph
+		 * with the sensor entity at the top, and a nullptr as the sink
+		 * pad link.
+		 */
+		mediaWalks.push_back({});
+		walkGraph(&mediaWalks, &mediaWalks.back(), entity, nullptr);
+	}
+
+	return mediaWalks;
+}
+
+/**
  * \brief Retrieve the MediaLink connecting two pads, identified by entity
  * names and pad indexes
  * \param[in] sourceName The source entity name
@@ -827,6 +926,42 @@ int MediaDevice::setupLink(const MediaLink *link, unsigned int flags)
 	LOG(MediaDevice, Debug) << *link << ": " << flags;
 
 	return 0;
+}
+
+void MediaDevice::walkGraph(std::vector<MediaWalk> *mediaWalks, MediaWalk *walk,
+			    MediaEntity *entity, MediaLink *sinkLink) const
+{
+	bool newWalk = false;
+
+	walk->push_back({ entity, sinkLink, nullptr });
+
+	for (const MediaPad *pad : entity->pads()) {
+		/* We only walk down the graph, so ignore any sink pads */
+		if (pad->flags() & MEDIA_PAD_FL_SINK)
+			continue;
+
+		for (MediaLink *nextLink : pad->links()) {
+			MediaDevice::MediaWalk *nextWalk = walk;
+			/*
+			 * If this is a new branch in the graph, create a new
+			 * MediaWalk structure in our list, and populate it with
+			 * a copy of the curret MediaWalk. Any subsequent recursion
+			 * into this graph branch will cause it to diverge.
+			 */
+			if (newWalk) {
+				mediaWalks->push_back(*walk);
+				nextWalk = &mediaWalks->back();
+			}
+
+			/* Record the source pad link for the current entity */
+			walk->back().sourceLink = nextLink;
+
+			/* Recurse into the next entity for this source pad link */
+			MediaEntity *nextEntity = nextLink->sink()->entity();
+			walkGraph(mediaWalks, nextWalk, nextEntity, nextLink);
+			newWalk = true;
+		}
+	}
 }
 
 } /* namespace libcamera */

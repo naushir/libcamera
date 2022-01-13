@@ -24,6 +24,13 @@ namespace libcamera {
 class MediaDevice : protected Loggable
 {
 public:
+	struct EntityParams {
+		MediaEntity *entity;
+		MediaLink *sinkLink;
+		MediaLink *sourceLink;
+	};
+	using MediaWalk = std::vector<EntityParams>;
+
 	MediaDevice(const std::string &deviceNode);
 	~MediaDevice();
 
@@ -45,6 +52,8 @@ public:
 
 	const std::vector<MediaEntity *> &entities() const { return entities_; }
 	MediaEntity *getEntityByName(const std::string &name) const;
+
+	std::vector<MediaWalk> enumerateMediaWalks() const;
 
 	MediaLink *link(const std::string &sourceName, unsigned int sourceIdx,
 			const std::string &sinkName, unsigned int sinkIdx);
@@ -75,6 +84,9 @@ private:
 
 	friend int MediaLink::setEnabled(bool enable);
 	int setupLink(const MediaLink *link, unsigned int flags);
+
+	void walkGraph(std::vector<MediaWalk> *mediaWalks, MediaWalk *walk,
+		       MediaEntity *entity, MediaLink *sinkLink) const;
 
 	std::string driver_;
 	std::string deviceNode_;
