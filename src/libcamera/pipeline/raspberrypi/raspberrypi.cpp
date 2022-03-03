@@ -185,7 +185,7 @@ public:
 	RPiCameraData(PipelineHandler *pipe)
 		: Camera::Private(pipe), state_(State::Stopped),
 		  supportsFlips_(false), flipsAlterBayerOrder_(false),
-		  dropFrameCount_(0), ispOutputCount_(0)
+		  dropFrameCount_(0), reconfigured_(true), ispOutputCount_(0)
 	{
 	}
 
@@ -283,6 +283,9 @@ public:
 	 * the V4L2_CID_NOTIFY_GAINS control.
 	 */
 	std::optional<int32_t> notifyGainsUnity_;
+
+	/* Has this camera been reconfigured? */
+	bool reconfigured_;
 
 private:
 	void checkRequestCompleted();
@@ -961,6 +964,7 @@ int PipelineHandlerRPi::configure(Camera *camera, CameraConfiguration *config)
 				<< " on pad " << sinkPad->index();
 	}
 
+	data->reconfigured_ = true;
 	return ret;
 }
 
@@ -981,12 +985,15 @@ int PipelineHandlerRPi::start(Camera *camera, const ControlList *controls)
 	RPiCameraData *data = cameraData(camera);
 	int ret;
 
-	/* Allocate buffers for internal pipeline usage. */
-	ret = prepareBuffers(camera);
-	if (ret) {
-		LOG(RPI, Error) << "Failed to allocate buffers";
-		stop(camera);
-		return ret;
+	if (data->reconfigured_) {
+		/* Allocate buffers for internal pipeline usage. */
+		ret = prepareBuffers(camera);
+		if (ret) {
+			LOG(RPI, Error) << "Failed to allocate buffers";
+			stop(camera);
+			return ret;
+		}
+		data->reconfigured_ = false;
 	}
 
 	/* Check if a ScalerCrop control was specified. */
