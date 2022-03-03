@@ -126,6 +126,7 @@ public:
 
 	int get(const FrameBuffer &buffer);
 	void put(unsigned int index);
+	bool isEmpty() const;
 
 private:
 	class Entry

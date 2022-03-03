@@ -262,6 +262,19 @@ void V4L2BufferCache::put(unsigned int index)
 	cache_[index].free_ = true;
 }
 
+/**
+ * \brief Check if all the entries in the cache are unused
+ */
+bool V4L2BufferCache::isEmpty() const
+{
+	for (auto const &entry : cache_) {
+		if (!entry.free_)
+			return false;
+	}
+
+	return true;
+}
+
 V4L2BufferCache::Entry::Entry()
 	: free_(true), lastUsed_(0)
 {
@@ -1832,9 +1845,12 @@ int V4L2VideoDevice::streamOff()
 	for (auto it : queuedBuffers_) {
 		FrameBuffer *buffer = it.second;
 
+		cache_->put(it.first);
 		buffer->metadata_.status = FrameMetadata::FrameCancelled;
 		bufferReady.emit(buffer);
 	}
+
+	ASSERT(cache_->isEmpty());
 
 	queuedBuffers_.clear();
 	fdBufferNotifier_->setEnabled(false);
