@@ -189,6 +189,11 @@ public:
 	{
 	}
 
+	~RPiCameraData()
+	{
+		freeBuffers();
+	}
+
 	void freeBuffers();
 	void frameStarted(uint32_t sequence);
 
@@ -681,7 +686,8 @@ int PipelineHandlerRPi::configure(Camera *camera, CameraConfiguration *config)
 	RPiCameraData *data = cameraData(camera);
 	int ret;
 
-	/* Start by resetting the Unicam and ISP stream states. */
+	/* Start by freeing all buffers and resetting the Unicam and ISP stream states. */
+	data->freeBuffers();
 	for (auto const stream : data->streams_)
 		stream->reset();
 
@@ -1048,8 +1054,6 @@ void PipelineHandlerRPi::stopDevice(Camera *camera)
 
 	/* Stop the IPA. */
 	data->ipa_->stop();
-
-	data->freeBuffers();
 }
 
 int PipelineHandlerRPi::queueRequestDevice(Camera *camera, Request *request)
