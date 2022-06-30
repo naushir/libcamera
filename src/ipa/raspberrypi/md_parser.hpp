@@ -81,27 +81,27 @@ public:
 
 	virtual ~MdParser() = default;
 
-	void Reset()
+	void reset()
 	{
 		reset_ = true;
 	}
 
-	void SetBitsPerPixel(int bpp)
+	void setBitsPerPixel(int bpp)
 	{
 		bits_per_pixel_ = bpp;
 	}
 
-	void SetNumLines(unsigned int num_lines)
+	void setNumLines(unsigned int numLines)
 	{
-		num_lines_ = num_lines;
+		num_lines_ = numLines;
 	}
 
-	void SetLineLengthBytes(unsigned int num_bytes)
+	void setLineLengthBytes(unsigned int numBytes)
 	{
-		line_length_bytes_ = num_bytes;
+		line_length_bytes_ = numBytes;
 	}
 
-	virtual Status Parse(libcamera::Span<const uint8_t> buffer,
+	virtual Status parse(libcamera::Span<const uint8_t> buffer,
 			     RegisterMap &registers) = 0;
 
 protected:
@@ -123,7 +123,7 @@ class MdParserSmia final : public MdParser
 public:
 	MdParserSmia(std::initializer_list<uint32_t> registerList);
 
-	MdParser::Status Parse(libcamera::Span<const uint8_t> buffer,
+	MdParser::Status parse(libcamera::Span<const uint8_t> buffer,
 			       RegisterMap &registers) override;
 
 private:
@@ -133,18 +133,18 @@ private:
 	/*
 	 * Note that error codes > 0 are regarded as non-fatal; codes < 0
 	 * indicate a bad data buffer. Status codes are:
-	 * PARSE_OK     - found all registers, much happiness
-	 * MISSING_REGS - some registers found; should this be a hard error?
+	 * ParseOk     - found all registers, much happiness
+	 * MissingRegs - some registers found; should this be a hard error?
 	 * The remaining codes are all hard errors.
 	 */
 	enum ParseStatus {
-		PARSE_OK      =  0,
-		MISSING_REGS  =  1,
-		NO_LINE_START = -1,
-		ILLEGAL_TAG   = -2,
-		BAD_DUMMY     = -3,
-		BAD_LINE_END  = -4,
-		BAD_PADDING   = -5
+		ParseOk      =  0,
+		MissingRegs  =  1,
+		NoLineStart  = -1,
+		IllegalTag   = -2,
+		BadDummy     = -3,
+		BadLineEnd   = -4,
+		BadPadding   = -5
 	};
 
 	ParseStatus findRegs(libcamera::Span<const uint8_t> buffer);
