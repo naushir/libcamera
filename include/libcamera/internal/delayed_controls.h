@@ -8,7 +8,10 @@
 #pragma once
 
 #include <stdint.h>
+#include <memory>
 #include <unordered_map>
+
+#include "delayed_sync_list.h"
 
 #include <libcamera/controls.h>
 
@@ -35,47 +38,9 @@ public:
 	void applyControls(uint32_t sequence);
 
 private:
-	class Info : public ControlValue
-	{
-	public:
-		Info()
-			: updated(false)
-		{
-		}
-
-		Info(const ControlValue &v, bool updated_ = true)
-			: ControlValue(v), updated(updated_)
-		{
-		}
-
-		bool updated;
-	};
-
-	/* \todo Make the listSize configurable at instance creation time. */
-	static constexpr int listSize = 16;
-	class ControlRingBuffer : public std::array<Info, listSize>
-	{
-	public:
-		Info &operator[](unsigned int index)
-		{
-			return std::array<Info, listSize>::operator[](index % listSize);
-		}
-
-		const Info &operator[](unsigned int index) const
-		{
-			return std::array<Info, listSize>::operator[](index % listSize);
-		}
-	};
-
 	V4L2Device *device_;
-	/* \todo Evaluate if we should index on ControlId * or unsigned int */
-	std::unordered_map<const ControlId *, ControlParams> controlParams_;
-	unsigned int maxDelay_;
-
-	uint32_t queueCount_;
-	uint32_t writeCount_;
-	/* \todo Evaluate if we should index on ControlId * or unsigned int */
-	std::unordered_map<const ControlId *, ControlRingBuffer> values_;
+	std::unique_ptr<DelayedSyncList<unsigned int>> delaySync_;
+	std::unordered_map<unsigned int, ControlParams> controlParams_;
 };
 
 } /* namespace libcamera */
