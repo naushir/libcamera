@@ -292,15 +292,23 @@ const char *V4L2PixelFormat::description() const
 
 /**
  * \brief Convert the V4L2 pixel format to the corresponding PixelFormat
+ * \param[in] warn Flag to control the warning message if the format is not
+ * supported. Default to true, set to false to suppress warning message.
+ *
+ * Users of this function might try to convert a V4L2PixelFormat to a PixelFormat
+ * just to check if the format is supported or not. In that case, they can suppress
+ * the warning message setting the \a warn argument to false not not pollute the log
+ * with unnecessary warning messages.
+ *
  * \return The PixelFormat corresponding to the V4L2 pixel format
  */
-PixelFormat V4L2PixelFormat::toPixelFormat() const
+PixelFormat V4L2PixelFormat::toPixelFormat(bool warn) const
 {
 	const auto iter = vpf2pf.find(*this);
 	if (iter == vpf2pf.end()) {
-		LOG(V4L2, Warning)
-			<< "Unsupported V4L2 pixel format "
-			<< toString();
+		if (warn)
+			LOG(V4L2, Warning) << "Unsupported V4L2 pixel format "
+					   << toString();
 		return PixelFormat();
 	}
 
