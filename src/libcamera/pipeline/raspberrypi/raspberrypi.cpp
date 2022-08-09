@@ -208,7 +208,7 @@ public:
 	void runIsp(uint32_t bufferId);
 	void embeddedComplete(uint32_t bufferId);
 	void setIspControls(const ControlList &controls);
-	void setDelayedControls(const ControlList &controls);
+	void setDelayedControls(const ControlList &controls, uint32_t metadataIdx);
 	void setSensorControls(ControlList &controls);
 	void unicamTimeout();
 
@@ -1784,7 +1784,7 @@ void RPiCameraData::setIspControls(const ControlList &controls)
 	handleState();
 }
 
-void RPiCameraData::setDelayedControls(const ControlList &controls)
+void RPiCameraData::setDelayedControls(const ControlList &controls, [[maybe_unused]] uint32_t metadataIdx)
 {
 	if (!delayedCtrls_->push(controls))
 		LOG(RPI, Error) << "V4L2 DelayedControl set failed";

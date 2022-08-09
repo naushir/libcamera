@@ -1140,7 +1140,7 @@ void IPARPi::processStats(unsigned int bufferId)
 		ControlList ctrls(sensorCtrls_);
 		applyAGC(&agcStatus, ctrls);
 
-		setDelayedControls.emit(ctrls);
+		setDelayedControls.emit(ctrls, metadataIdx_);
 	}
 
 	metadataIdx_ = (metadataIdx_ + 1) % rpiMetadata_.size();
