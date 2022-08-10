@@ -1063,7 +1063,7 @@ int PipelineHandlerRPi::start(Camera *camera, const ControlList *controls)
 	 * Reset the delayed controls with the gain and exposure values set by
 	 * the IPA.
 	 */
-	std::unordered_map<unsigned int, std::any> reset{ { ipaMetadataId, 0 } };
+	std::unordered_map<unsigned int, std::any> reset{ { ipaMetadataId, std::make_any<uint32_t>(0) } };
 	data->delayedCtrls_->reset(reset);
 
 	data->state_ = RPiCameraData::State::Idle;
@@ -1871,7 +1871,7 @@ void RPiCameraData::unicamBufferDequeue(FrameBuffer *buffer)
 		 * as it does not receive the FrameBuffer object.
 		 */
 		ctrl.set(controls::SensorTimestamp, buffer->metadata().timestamp);
-		bayerQueue_.push({ buffer, std::move(ctrl), std::any_cast<unsigned int>(items[ipaMetadataId]) });
+		bayerQueue_.push({ buffer, std::move(ctrl), std::any_cast<uint32_t>(items[ipaMetadataId]) });
 	} else {
 		embeddedQueue_.push(buffer);
 	}

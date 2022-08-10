@@ -58,6 +58,8 @@ namespace libcamera {
 using namespace std::literals::chrono_literals;
 using utils::Duration;
 
+constexpr unsigned int numMetadataContexts = 16;
+
 /* Configure the sensor with these values initially. */
 constexpr double defaultAnalogueGain = 1.0;
 constexpr Duration defaultExposureTime = 20.0ms;
@@ -164,7 +166,7 @@ private:
 	/* Raspberry Pi controller specific defines. */
 	std::unique_ptr<RPiController::CamHelper> helper_;
 	RPiController::Controller controller_;
-	std::array<RPiController::Metadata, 8> rpiMetadata_;
+	std::array<RPiController::Metadata, numMetadataContexts> rpiMetadata_;
 	unsigned int metadataIdx_;
 
 	/*
@@ -516,6 +518,7 @@ void IPARPi::signalStatReady(uint32_t bufferId)
 	reportMetadata();
 
 	statsMetadataComplete.emit(bufferId & MaskID, libcameraMetadata_);
+	metadataIdx_ = (metadataIdx_ + 1) % rpiMetadata_.size();
 }
 
 void IPARPi::signalQueueRequest(const ControlList &controls)
@@ -1025,6 +1028,8 @@ void IPARPi::prepareISP(const ISPConfig &data)
 	globalMetadata.clear();
 	globalMetadata = rpiMetadata_[data.metadataIdx];
 
+	std::cout << "Current index " << metadataIdx_ << " Context index " << data.metadataIdx << std::endl;
+
 	/*
 	 * This may overwrite the DeviceStatus using values from the sensor
 	 * metadata, and may also do additional custom processing.
@@ -1146,8 +1151,6 @@ void IPARPi::processStats(unsigned int bufferId)
 
 		setDelayedControls.emit(ctrls, metadataIdx_);
 	}
-
-	metadataIdx_ = (metadataIdx_ + 1) % rpiMetadata_.size();
 }
 
 void IPARPi::applyAWB(const struct AwbStatus *awbStatus, ControlList &ctrls)
