@@ -2165,6 +2165,7 @@ void RPiCameraData::tryRunPipeline()
 	ipa::RPi::ISPConfig ispPrepare;
 	ispPrepare.bayerBufferId = ipa::RPi::MaskBayerData | bayerId;
 	ispPrepare.controls = std::move(bayerFrame.controls);
+	ispPrepare.metadataIdx = bayerFrame.ipaMetadataIdx;
 
 	if (embeddedBuffer) {
 		unsigned int embeddedId = unicam_[Unicam::Embedded].getBufferId(embeddedBuffer);

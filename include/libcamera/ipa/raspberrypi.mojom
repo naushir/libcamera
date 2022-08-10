@@ -36,6 +36,7 @@ struct ISPConfig {
 	uint32 bayerBufferId;
 	bool embeddedBufferPresent;
 	libcamera.ControlList controls;
+	uint32 metadataIdx;
 };
 
 struct IPAConfig {

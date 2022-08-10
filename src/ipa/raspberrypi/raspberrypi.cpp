@@ -1021,6 +1021,10 @@ void IPARPi::prepareISP(const ISPConfig &data)
 		embeddedBuffer = it->second.planes()[0];
 	}
 
+	RPiController::Metadata &globalMetadata = controller_.getGlobalMetadata();
+	globalMetadata.clear();
+	globalMetadata = rpiMetadata_[data.metadataIdx];
+
 	/*
 	 * This may overwrite the DeviceStatus using values from the sensor
 	 * metadata, and may also do additional custom processing.
