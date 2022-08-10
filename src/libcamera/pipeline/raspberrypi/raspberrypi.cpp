@@ -33,7 +33,6 @@
 #include "libcamera/internal/bayer_format.h"
 #include "libcamera/internal/camera.h"
 #include "libcamera/internal/camera_sensor.h"
-#include "libcamera/internal/delayed_controls.h"
 #include "libcamera/internal/device_enumerator.h"
 #include "libcamera/internal/framebuffer.h"
 #include "libcamera/internal/ipa_manager.h"
@@ -42,6 +41,7 @@
 #include "libcamera/internal/v4l2_videodevice.h"
 
 #include "dma_heaps.h"
+#include "rpi_delayed_controls.h"
 #include "rpi_stream.h"
 
 using namespace std::chrono_literals;
@@ -52,6 +52,7 @@ LOG_DEFINE_CATEGORY(RPI)
 
 namespace {
 
+constexpr unsigned int ipaMetadataId = 1;
 constexpr unsigned int defaultRawBitDepth = 12;
 
 /* Map of mbus codes to supported sizes reported by the sensor. */
@@ -245,7 +246,7 @@ public:
 	RPi::DmaHeap dmaHeap_;
 	SharedFD lsTable_;
 
-	std::unique_ptr<DelayedControls> delayedCtrls_;
+	std::unique_ptr<RPiDelayedControls> delayedCtrls_;
 	bool sensorMetadata_;
 
 	/*
@@ -259,6 +260,7 @@ public:
 	struct BayerFrame {
 		FrameBuffer *buffer;
 		ControlList controls;
+		unsigned int ipaMetadataIdx;
 	};
 
 	std::queue<BayerFrame> bayerQueue_;
@@ -1061,7 +1063,8 @@ int PipelineHandlerRPi::start(Camera *camera, const ControlList *controls)
 	 * Reset the delayed controls with the gain and exposure values set by
 	 * the IPA.
 	 */
-	data->delayedCtrls_->reset();
+	std::unordered_map<unsigned int, std::any> reset{ { ipaMetadataId, 0 } };
+	data->delayedCtrls_->reset(reset);
 
 	data->state_ = RPiCameraData::State::Idle;
 
@@ -1291,12 +1294,13 @@ int PipelineHandlerRPi::registerCamera(MediaDevice *unicam, MediaDevice *isp, Me
 	 * Setup our delayed control writer with the sensor default
 	 * gain and exposure delays. Mark VBLANK for priority write.
 	 */
-	std::unordered_map<uint32_t, DelayedControls::ControlParams> params = {
+	std::unordered_map<uint32_t, RPiDelayedControls::ControlParams> params = {
 		{ V4L2_CID_ANALOGUE_GAIN, { result.sensorConfig.gainDelay, false } },
 		{ V4L2_CID_EXPOSURE, { result.sensorConfig.exposureDelay, false } },
-		{ V4L2_CID_VBLANK, { result.sensorConfig.vblankDelay, true } }
+		{ V4L2_CID_VBLANK, { result.sensorConfig.vblankDelay, true } },
+		{ ipaMetadataId, { 0, false } }
 	};
-	data->delayedCtrls_ = std::make_unique<DelayedControls>(data->sensor_->device(), params);
+	data->delayedCtrls_ = std::make_unique<RPiDelayedControls>(data->sensor_->device(), params);
 	data->sensorMetadata_ = result.sensorConfig.sensorMetadata;
 
 	/* Register initial controls that the Raspberry Pi IPA can handle. */
@@ -1784,9 +1788,16 @@ void RPiCameraData::setIspControls(const ControlList &controls)
 	handleState();
 }
 
-void RPiCameraData::setDelayedControls(const ControlList &controls, [[maybe_unused]] uint32_t metadataIdx)
+void RPiCameraData::setDelayedControls(const ControlList &controls, uint32_t metadataIdx)
 {
-	if (!delayedCtrls_->push(controls))
+	std::unordered_map<unsigned int, std::any> items;
+
+	for (const auto &control : controls)
+		items.emplace(control.first, control.second);
+
+	items.emplace(ipaMetadataId, metadataIdx);
+
+	if (!delayedCtrls_->push(items))
 		LOG(RPI, Error) << "V4L2 DelayedControl set failed";
 	handleState();
 }
@@ -1848,13 +1859,19 @@ void RPiCameraData::unicamBufferDequeue(FrameBuffer *buffer)
 		 * Lookup the sensor controls used for this frame sequence from
 		 * DelayedControl and queue them along with the frame buffer.
 		 */
-		ControlList ctrl = delayedCtrls_->get(buffer->metadata().sequence);
+		std::unordered_map<unsigned int, std::any> items = delayedCtrls_->get(buffer->metadata().sequence);
+
+		ControlList ctrl;
+		for (auto const &[id, value] : items) {
+			if (id != ipaMetadataId)
+				ctrl.set(id, std::any_cast<ControlValue>(value));
+		}
 		/*
 		 * Add the frame timestamp to the ControlList for the IPA to use
 		 * as it does not receive the FrameBuffer object.
 		 */
 		ctrl.set(controls::SensorTimestamp, buffer->metadata().timestamp);
-		bayerQueue_.push({ buffer, std::move(ctrl) });
+		bayerQueue_.push({ buffer, std::move(ctrl), std::any_cast<unsigned int>(items[ipaMetadataId]) });
 	} else {
 		embeddedQueue_.push(buffer);
 	}
