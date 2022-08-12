@@ -126,10 +126,10 @@ public:
 		      ControlList *controls, IPAConfigResult *result) override;
 	void mapBuffers(const std::vector<IPABuffer> &buffers) override;
 	void unmapBuffers(const std::vector<unsigned int> &ids) override;
-	void signalStatReady(const uint32_t bufferId) override;
+	void signalStatReady(const uint32_t bufferId, const uint32_t ipaContext) override;
 	void signalQueueRequest(const ControlList &controls) override;
-	void signalIpaPrepare(const ISPConfig &data) override;
-	void signalIspPrepare(uint32_t bufferId, uint32_t metadataIdx) override;
+	uint32_t signalIpaPrepare(const ISPConfig &data) override;
+	void signalIspPrepare(uint32_t bufferId, const uint32_t ipaContext) override;
 
 private:
 	void setMode(const IPACameraSensorInfo &sensorInfo);
@@ -137,11 +137,9 @@ private:
 	bool validateIspControls();
 	void queueRequest(const ControlList &controls);
 	void returnEmbeddedBuffer(unsigned int bufferId);
-	void controllerPrepare(const ISPConfig &data);
-	void ispPrepare();
-	void reportMetadata();
-	void fillDeviceStatus(const ControlList &sensorControls);
-	void processStats(unsigned int bufferId);
+	void reportMetadata(uint32_t ipaContext);
+	void fillDeviceStatus(const ControlList &sensorControls, uint32_t ipaContext);
+	void processStats(unsigned int bufferId, uint32_t ipaContext);
 	void applyFrameDurations(Duration minFrameDuration, Duration maxFrameDuration);
 	void applyAGC(const struct AgcStatus *agcStatus, ControlList &ctrls);
 	void applyAWB(const struct AwbStatus *awbStatus, ControlList &ctrls);
@@ -169,7 +167,7 @@ private:
 	std::unique_ptr<RPiController::CamHelper> helper_;
 	RPiController::Controller controller_;
 	std::array<RPiController::Metadata, numMetadataContexts> rpiMetadata_;
-	unsigned int metadataIdx_;
+	unsigned int ipaContext_;
 
 	/*
 	 * We count frames to decide if the frame must be hidden (e.g. from
@@ -325,7 +323,7 @@ void IPARPi::start(const ControlList &controls, StartConfig *startConfig)
 
 	firstStart_ = false;
 	lastRunTimestamp_ = 0;
-	metadataIdx_ = 0;
+	ipaContext_ = 0;
 }
 
 void IPARPi::setMode(const IPACameraSensorInfo &sensorInfo)
@@ -510,17 +508,16 @@ void IPARPi::unmapBuffers(const std::vector<unsigned int> &ids)
 	}
 }
 
-void IPARPi::signalStatReady(uint32_t bufferId)
+void IPARPi::signalStatReady(uint32_t bufferId, uint32_t ipaContext)
 {
 	if (++checkCount_ != frameCount_) /* assert here? */
 		LOG(IPARPI, Error) << "WARNING: Prepare/Process mismatch!!!";
 	if (processPending_ && frameCount_ > mistrustCount_)
-		processStats(bufferId);
+		processStats(bufferId, ipaContext);
 
-	reportMetadata();
+	reportMetadata(ipaContext);
 
 	statsMetadataComplete.emit(bufferId & MaskID, libcameraMetadata_);
-	metadataIdx_ = (metadataIdx_ + 1) % rpiMetadata_.size();
 }
 
 void IPARPi::signalQueueRequest(const ControlList &controls)
@@ -528,20 +525,78 @@ void IPARPi::signalQueueRequest(const ControlList &controls)
 	queueRequest(controls);
 }
 
-void IPARPi::signalIpaPrepare(const ISPConfig &data)
+uint32_t IPARPi::signalIpaPrepare(const ISPConfig &data)
 {
 	/*
 	 * At start-up, or after a mode-switch, we may want to
 	 * avoid running the control algos for a few frames in case
 	 * they are "unreliable".
 	 */
-	controllerPrepare(data);
+
+	unsigned int context = ipaContext_;
+	int64_t frameTimestamp = data.controls.get(controls::SensorTimestamp).value_or(0);
+	RPiController::Metadata &rpiMetadata = rpiMetadata_[context];
+	Span<uint8_t> embeddedBuffer;
+
+	rpiMetadata.clear();
+	fillDeviceStatus(data.controls, context);
+
+	if (data.embeddedBufferPresent) {
+		/*
+		 * Pipeline handler has supplied us with an embedded data buffer,
+		 * we must pass it to the CamHelper for parsing.
+		 */
+		auto it = buffers_.find(data.embeddedBufferId);
+		ASSERT(it != buffers_.end());
+		embeddedBuffer = it->second.planes()[0];
+	}
+
+	RPiController::Metadata &globalMetadata = controller_.getGlobalMetadata();
+	globalMetadata.clear();
+	globalMetadata = rpiMetadata_[data.ipaContext];
+
+	std::cout << "Current index " << context << " Context index " << data.ipaContext << std::endl;
+	ipaContext_ = (ipaContext_ + 1) % rpiMetadata_.size();
+
+	/*
+	 * This may overwrite the DeviceStatus using values from the sensor
+	 * metadata, and may also do additional custom processing.
+	 */
+	helper_->prepare(embeddedBuffer, rpiMetadata);
+
+	/* Done with embedded data now, return to pipeline handler asap. */
+	if (data.embeddedBufferPresent)
+		returnEmbeddedBuffer(data.embeddedBufferId);
+
+	/* Allow a 10% margin on the comparison below. */
+	Duration delta = (frameTimestamp - lastRunTimestamp_) * 1.0ns;
+	if (lastRunTimestamp_ && frameCount_ > dropFrameCount_ &&
+	    delta < controllerMinFrameDuration * 0.9) {
+		/*
+		 * Ensure we merge the previous frame's metadata with the current
+		 * frame. This will not overwrite exposure/gain values for the
+		 * current frame, or any other bits of metadata that were added
+		 * in helper_->Prepare().
+		 */
+		RPiController::Metadata &lastMetadata =
+			rpiMetadata_[context == 0 ? rpiMetadata_.size() - 1 : context - 1];
+		rpiMetadata.merge(lastMetadata);
+		processPending_ = false;
+		return context;
+	}
+
+	lastRunTimestamp_ = frameTimestamp;
+	processPending_ = true;
+
+	controller_.prepare(&rpiMetadata);
 	frameCount_++;
+
+	return context;
 }
 
-void IPARPi::signalIspPrepare(uint32_t bufferId, uint32_t metadataIdx)
+void IPARPi::signalIspPrepare(uint32_t bufferId, uint32_t ipaContext)
 {
-	RPiController::Metadata &rpiMetadata = rpiMetadata_[metadataIdx];
+	RPiController::Metadata &rpiMetadata = rpiMetadata_[ipaContext];
 	ControlList ctrls(ispCtrls_);
 
 	/* Lock the metadata buffer to avoid constant locks/unlocks. */
@@ -594,9 +649,9 @@ void IPARPi::signalIspPrepare(uint32_t bufferId, uint32_t metadataIdx)
 	runIsp.emit(bufferId & MaskID);
 }
 
-void IPARPi::reportMetadata()
+void IPARPi::reportMetadata(uint32_t ipaContext)
 {
-	RPiController::Metadata &rpiMetadata = rpiMetadata_[metadataIdx_];
+	RPiController::Metadata &rpiMetadata = rpiMetadata_[ipaContext];
 	std::unique_lock<RPiController::Metadata> lock(rpiMetadata);
 
 	/*
@@ -1059,65 +1114,7 @@ void IPARPi::returnEmbeddedBuffer(unsigned int bufferId)
 	embeddedComplete.emit(bufferId & MaskID);
 }
 
-void IPARPi::controllerPrepare(const ISPConfig &data)
-{
-	int64_t frameTimestamp = data.controls.get(controls::SensorTimestamp).value_or(0);
-	RPiController::Metadata &rpiMetadata = rpiMetadata_[metadataIdx_];
-	Span<uint8_t> embeddedBuffer;
-
-	rpiMetadata.clear();
-	fillDeviceStatus(data.controls);
-
-	if (data.embeddedBufferPresent) {
-		/*
-		 * Pipeline handler has supplied us with an embedded data buffer,
-		 * we must pass it to the CamHelper for parsing.
-		 */
-		auto it = buffers_.find(data.embeddedBufferId);
-		ASSERT(it != buffers_.end());
-		embeddedBuffer = it->second.planes()[0];
-	}
-
-	RPiController::Metadata &globalMetadata = controller_.getGlobalMetadata();
-	globalMetadata.clear();
-	globalMetadata = rpiMetadata_[data.metadataIdx];
-
-	std::cout << "Current index " << metadataIdx_ << " Context index " << data.metadataIdx << std::endl;
-
-	/*
-	 * This may overwrite the DeviceStatus using values from the sensor
-	 * metadata, and may also do additional custom processing.
-	 */
-	helper_->prepare(embeddedBuffer, rpiMetadata);
-
-	/* Done with embedded data now, return to pipeline handler asap. */
-	if (data.embeddedBufferPresent)
-		returnEmbeddedBuffer(data.embeddedBufferId);
-
-	/* Allow a 10% margin on the comparison below. */
-	Duration delta = (frameTimestamp - lastRunTimestamp_) * 1.0ns;
-	if (lastRunTimestamp_ && frameCount_ > dropFrameCount_ &&
-	    delta < controllerMinFrameDuration * 0.9) {
-		/*
-		 * Ensure we merge the previous frame's metadata with the current
-		 * frame. This will not overwrite exposure/gain values for the
-		 * current frame, or any other bits of metadata that were added
-		 * in helper_->Prepare().
-		 */
-		RPiController::Metadata &lastMetadata =
-			rpiMetadata_[metadataIdx_ == 0 ? rpiMetadata_.size() - 1 : metadataIdx_ - 1];
-		rpiMetadata.merge(lastMetadata);
-		processPending_ = false;
-		return;
-	}
-
-	lastRunTimestamp_ = frameTimestamp;
-	processPending_ = true;
-
-	controller_.prepare(&rpiMetadata);
-}
-
-void IPARPi::fillDeviceStatus(const ControlList &sensorControls)
+void IPARPi::fillDeviceStatus(const ControlList &sensorControls, uint32_t ipaContext)
 {
 	DeviceStatus deviceStatus = {};
 
@@ -1131,12 +1128,12 @@ void IPARPi::fillDeviceStatus(const ControlList &sensorControls)
 
 	LOG(IPARPI, Debug) << "Metadata - " << deviceStatus;
 
-	rpiMetadata_[metadataIdx_].set("device.status", deviceStatus);
+	rpiMetadata_[ipaContext].set("device.status", deviceStatus);
 }
 
-void IPARPi::processStats(unsigned int bufferId)
+void IPARPi::processStats(unsigned int bufferId, uint32_t ipaContext)
 {
-	RPiController::Metadata &rpiMetadata = rpiMetadata_[metadataIdx_];
+	RPiController::Metadata &rpiMetadata = rpiMetadata_[ipaContext];
 
 	auto it = buffers_.find(bufferId);
 	if (it == buffers_.end()) {
@@ -1155,7 +1152,7 @@ void IPARPi::processStats(unsigned int bufferId)
 		ControlList ctrls(sensorCtrls_);
 		applyAGC(&agcStatus, ctrls);
 
-		setDelayedControls.emit(ctrls, metadataIdx_);
+		setDelayedControls.emit(ctrls, ipaContext);
 	}
 }
 

@@ -209,7 +209,7 @@ public:
 	void runIsp(uint32_t bufferId);
 	void embeddedComplete(uint32_t bufferId);
 	void setIspControls(const ControlList &controls);
-	void setDelayedControls(const ControlList &controls, uint32_t metadataIdx);
+	void setDelayedControls(const ControlList &controls, uint32_t ipaContext);
 	void setSensorControls(ControlList &controls);
 	void unicamTimeout();
 
@@ -260,12 +260,13 @@ public:
 	struct BayerFrame {
 		FrameBuffer *buffer;
 		ControlList controls;
-		unsigned int ipaMetadataIdx;
+		unsigned int ipaContext;
 	};
 
 	std::queue<BayerFrame> bayerQueue_;
 	std::queue<FrameBuffer *> embeddedQueue_;
 	std::deque<Request *> requestQueue_;
+	uint32_t ipaContext_;
 
 	/*
 	 * Manage horizontal and vertical flips supported (or not) by the
@@ -1788,14 +1789,14 @@ void RPiCameraData::setIspControls(const ControlList &controls)
 	handleState();
 }
 
-void RPiCameraData::setDelayedControls(const ControlList &controls, uint32_t metadataIdx)
+void RPiCameraData::setDelayedControls(const ControlList &controls, uint32_t ipaContext)
 {
 	std::unordered_map<unsigned int, std::any> items;
 
 	for (const auto &control : controls)
 		items.emplace(control.first, control.second);
 
-	items.emplace(ipaMetadataId, metadataIdx);
+	items.emplace(ipaMetadataId, ipaContext);
 
 	if (!delayedCtrls_->push(items))
 		LOG(RPI, Error) << "V4L2 DelayedControl set failed";
@@ -1921,7 +1922,7 @@ void RPiCameraData::ispOutputDequeue(FrameBuffer *buffer)
 	 * application until after the IPA signals so.
 	 */
 	if (stream == &isp_[Isp::Stats]) {
-		ipa_->signalStatReady(ipa::RPi::MaskStats | static_cast<unsigned int>(index));
+		ipa_->signalStatReady(ipa::RPi::MaskStats | static_cast<unsigned int>(index), ipaContext_);
 	} else {
 		/* Any other ISP output can be handed back to the application now. */
 		handleStreamBuffer(buffer, stream);
@@ -2165,7 +2166,7 @@ void RPiCameraData::tryRunPipeline()
 	ipa::RPi::ISPConfig ispPrepare;
 	ispPrepare.bayerBufferId = ipa::RPi::MaskBayerData | bayerId;
 	ispPrepare.controls = std::move(bayerFrame.controls);
-	ispPrepare.metadataIdx = bayerFrame.ipaMetadataIdx;
+	ispPrepare.ipaContext = bayerFrame.ipaContext;
 
 	if (embeddedBuffer) {
 		unsigned int embeddedId = unicam_[Unicam::Embedded].getBufferId(embeddedBuffer);
@@ -2177,8 +2178,8 @@ void RPiCameraData::tryRunPipeline()
 				<< " Embedded buffer id: " << embeddedId;
 	}
 
-	ipa_->signalIpaPrepare(ispPrepare);
-	ipa_->signalIspPrepare(ipa::RPi::MaskBayerData | bayerId, bayerFrame.ipaMetadataIdx);
+	ipaContext_ = ipa_->signalIpaPrepare(ispPrepare);
+	ipa_->signalIspPrepare(ipa::RPi::MaskBayerData | bayerId, ipaContext_);
 }
 
 bool RPiCameraData::findMatchingBuffers(BayerFrame &bayerFrame, FrameBuffer *&embeddedBuffer)
