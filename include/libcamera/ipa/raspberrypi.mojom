@@ -36,7 +36,7 @@ struct ISPConfig {
 	uint32 bayerBufferId;
 	bool embeddedBufferPresent;
 	libcamera.ControlList controls;
-	uint32 ipaContext;
+	uint32 ipaControlContext;
 };
 
 struct IPAConfig {
@@ -139,5 +139,5 @@ interface IPARPiEventInterface {
 	runIsp(uint32 bufferId);
 	embeddedComplete(uint32 bufferId);
 	setIspControls(libcamera.ControlList controls);
-	setDelayedControls(libcamera.ControlList controls, uint32 ipaContext);
+	setDelayedControls(libcamera.ControlList controls, uint32 ipaControlContext);
 };

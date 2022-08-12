@@ -209,7 +209,7 @@ public:
 	void runIsp(uint32_t bufferId);
 	void embeddedComplete(uint32_t bufferId);
 	void setIspControls(const ControlList &controls);
-	void setDelayedControls(const ControlList &controls, uint32_t ipaContext);
+	void setDelayedControls(const ControlList &controls, uint32_t ipaControlContext);
 	void setSensorControls(ControlList &controls);
 	void unicamTimeout();
 
@@ -260,13 +260,19 @@ public:
 	struct BayerFrame {
 		FrameBuffer *buffer;
 		ControlList controls;
-		unsigned int ipaContext;
+		unsigned int ipaControlContext;
 	};
 
 	std::queue<BayerFrame> bayerQueue_;
 	std::queue<FrameBuffer *> embeddedQueue_;
-	std::deque<Request *> requestQueue_;
-	uint32_t ipaContext_;
+	std::queue<Request *> requestQueue_;
+
+	struct IspPendingData {
+		FrameBuffer *buffer;
+		uint32_t ipaContext;
+	};
+
+	std::queue<IspPendingData> ispPendingQueue_;
 
 	/*
 	 * Manage horizontal and vertical flips supported (or not) by the
@@ -298,6 +304,7 @@ private:
 	void checkRequestCompleted();
 	void fillRequestMetadata(const ControlList &bufferControls,
 				 Request *request);
+	void ipaPrepare();
 	void tryRunPipeline();
 	bool findMatchingBuffers(BayerFrame &bayerFrame, FrameBuffer *&embeddedBuffer);
 
@@ -1104,6 +1111,7 @@ void PipelineHandlerRPi::stopDevice(Camera *camera)
 	data->clearIncompleteRequests();
 	data->bayerQueue_ = {};
 	data->embeddedQueue_ = {};
+	data->ispPendingQueue_ = {};
 
 	/* Stop the IPA. */
 	data->ipa_->stop();
@@ -1149,7 +1157,7 @@ int PipelineHandlerRPi::queueRequestDevice(Camera *camera, Request *request)
 	}
 
 	/* Push the request to the back of the queue. */
-	data->requestQueue_.push_back(request);
+	data->requestQueue_.push(request);
 	data->handleState();
 
 	return 0;
@@ -1789,14 +1797,14 @@ void RPiCameraData::setIspControls(const ControlList &controls)
 	handleState();
 }
 
-void RPiCameraData::setDelayedControls(const ControlList &controls, uint32_t ipaContext)
+void RPiCameraData::setDelayedControls(const ControlList &controls, uint32_t ipaControlContext)
 {
 	std::unordered_map<unsigned int, std::any> items;
 
 	for (const auto &control : controls)
 		items.emplace(control.first, control.second);
 
-	items.emplace(ipaMetadataId, ipaContext);
+	items.emplace(ipaMetadataId, ipaControlContext);
 
 	if (!delayedCtrls_->push(items))
 		LOG(RPI, Error) << "V4L2 DelayedControl set failed";
@@ -1922,7 +1930,9 @@ void RPiCameraData::ispOutputDequeue(FrameBuffer *buffer)
 	 * application until after the IPA signals so.
 	 */
 	if (stream == &isp_[Isp::Stats]) {
-		ipa_->signalStatReady(ipa::RPi::MaskStats | static_cast<unsigned int>(index), ipaContext_);
+		IspPendingData &isp = ispPendingQueue_.front();
+		ispPendingQueue_.pop();
+		ipa_->signalStatReady(ipa::RPi::MaskStats | static_cast<unsigned int>(index), isp.ipaContext);
 	} else {
 		/* Any other ISP output can be handed back to the application now. */
 		handleStreamBuffer(buffer, stream);
@@ -1959,7 +1969,7 @@ void RPiCameraData::clearIncompleteRequests()
 		}
 
 		pipe()->completeRequest(request);
-		requestQueue_.pop_front();
+		requestQueue_.pop();
 	}
 }
 
@@ -2008,7 +2018,10 @@ void RPiCameraData::handleState()
 {
 	switch (state_) {
 	case State::Stopped:
+		break;
+
 	case State::Busy:
+		ipaPrepare();
 		break;
 
 	case State::IpaComplete:
@@ -2021,6 +2034,7 @@ void RPiCameraData::handleState()
 		[[fallthrough]];
 
 	case State::Idle:
+		ipaPrepare();
 		tryRunPipeline();
 		break;
 	}
@@ -2043,7 +2057,7 @@ void RPiCameraData::checkRequestCompleted()
 			return;
 
 		pipe()->completeRequest(request);
-		requestQueue_.pop_front();
+		requestQueue_.pop();
 		requestCompleted = true;
 	}
 
@@ -2121,14 +2135,14 @@ void RPiCameraData::fillRequestMetadata(const ControlList &bufferControls,
 	request->metadata().set(controls::ScalerCrop, scalerCrop_);
 }
 
-void RPiCameraData::tryRunPipeline()
+void RPiCameraData::ipaPrepare()
 {
 	FrameBuffer *embeddedBuffer;
 	BayerFrame bayerFrame;
 
 	/* If any of our request or buffer queues are empty, we cannot proceed. */
-	if (state_ != State::Idle || requestQueue_.empty() ||
-	    bayerQueue_.empty() || (embeddedQueue_.empty() && sensorMetadata_))
+	if (requestQueue_.empty() || bayerQueue_.empty() ||
+	    (embeddedQueue_.empty() && sensorMetadata_))
 		return;
 
 	if (!findMatchingBuffers(bayerFrame, embeddedBuffer))
@@ -2155,9 +2169,6 @@ void RPiCameraData::tryRunPipeline()
 	 */
 	ipa_->signalQueueRequest(request->controls());
 
-	/* Set our state to say the pipeline is active. */
-	state_ = State::Busy;
-
 	unsigned int bayerId = unicam_[Unicam::Image].getBufferId(bayerFrame.buffer);
 
 	LOG(RPI, Debug) << "Signalling signalIspPrepare:"
@@ -2166,7 +2177,7 @@ void RPiCameraData::tryRunPipeline()
 	ipa::RPi::ISPConfig ispPrepare;
 	ispPrepare.bayerBufferId = ipa::RPi::MaskBayerData | bayerId;
 	ispPrepare.controls = std::move(bayerFrame.controls);
-	ispPrepare.ipaContext = bayerFrame.ipaContext;
+	ispPrepare.ipaControlContext = bayerFrame.ipaControlContext;
 
 	if (embeddedBuffer) {
 		unsigned int embeddedId = unicam_[Unicam::Embedded].getBufferId(embeddedBuffer);
@@ -2178,8 +2189,21 @@ void RPiCameraData::tryRunPipeline()
 				<< " Embedded buffer id: " << embeddedId;
 	}
 
-	ipaContext_ = ipa_->signalIpaPrepare(ispPrepare);
-	ipa_->signalIspPrepare(ipa::RPi::MaskBayerData | bayerId, ipaContext_);
+	uint32_t ipaContext = ipa_->signalIpaPrepare(ispPrepare);
+	ispPendingQueue_.push({ bayerFrame.buffer, ipaContext });
+}
+
+void RPiCameraData::tryRunPipeline()
+{
+	if (state_ != State::Idle || ispPendingQueue_.empty())
+		return;
+
+	IspPendingData &isp = ispPendingQueue_.front();
+	unsigned int bayerId = unicam_[Unicam::Image].getBufferId(isp.buffer);
+	ipa_->signalIspPrepare(ipa::RPi::MaskBayerData | bayerId, isp.ipaContext);
+
+	/* Set our state to say the pipeline is active. */
+	state_ = State::Busy;
 }
 
 bool RPiCameraData::findMatchingBuffers(BayerFrame &bayerFrame, FrameBuffer *&embeddedBuffer)
