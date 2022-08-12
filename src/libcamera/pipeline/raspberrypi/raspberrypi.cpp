@@ -2177,7 +2177,8 @@ void RPiCameraData::tryRunPipeline()
 				<< " Embedded buffer id: " << embeddedId;
 	}
 
-	ipa_->signalIspPrepare(ispPrepare);
+	ipa_->signalIpaPrepare(ispPrepare);
+	ipa_->signalIspPrepare(ipa::RPi::MaskBayerData | bayerId, bayerFrame.ipaMetadataIdx);
 }
 
 bool RPiCameraData::findMatchingBuffers(BayerFrame &bayerFrame, FrameBuffer *&embeddedBuffer)

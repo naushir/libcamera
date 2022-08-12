@@ -129,7 +129,8 @@ interface IPARPiInterface {
 
 	[async] signalStatReady(uint32 bufferId);
 	[async] signalQueueRequest(libcamera.ControlList controls);
-	[async] signalIspPrepare(ISPConfig data);
+	[async] signalIpaPrepare(ISPConfig data);
+	[async] signalIspPrepare(uint32 bayerBufferId, uint32 metadataIdx);
 };
 
 interface IPARPiEventInterface {

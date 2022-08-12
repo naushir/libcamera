@@ -128,7 +128,8 @@ public:
 	void unmapBuffers(const std::vector<unsigned int> &ids) override;
 	void signalStatReady(const uint32_t bufferId) override;
 	void signalQueueRequest(const ControlList &controls) override;
-	void signalIspPrepare(const ISPConfig &data) override;
+	void signalIpaPrepare(const ISPConfig &data) override;
+	void signalIspPrepare(uint32_t bufferId, uint32_t metadataIdx) override;
 
 private:
 	void setMode(const IPACameraSensorInfo &sensorInfo);
@@ -136,7 +137,8 @@ private:
 	bool validateIspControls();
 	void queueRequest(const ControlList &controls);
 	void returnEmbeddedBuffer(unsigned int bufferId);
-	void prepareISP(const ISPConfig &data);
+	void controllerPrepare(const ISPConfig &data);
+	void ispPrepare();
 	void reportMetadata();
 	void fillDeviceStatus(const ControlList &sensorControls);
 	void processStats(unsigned int bufferId);
@@ -526,18 +528,70 @@ void IPARPi::signalQueueRequest(const ControlList &controls)
 	queueRequest(controls);
 }
 
-void IPARPi::signalIspPrepare(const ISPConfig &data)
+void IPARPi::signalIpaPrepare(const ISPConfig &data)
 {
 	/*
 	 * At start-up, or after a mode-switch, we may want to
 	 * avoid running the control algos for a few frames in case
 	 * they are "unreliable".
 	 */
-	prepareISP(data);
+	controllerPrepare(data);
 	frameCount_++;
+}
+
+void IPARPi::signalIspPrepare(uint32_t bufferId, uint32_t metadataIdx)
+{
+	RPiController::Metadata &rpiMetadata = rpiMetadata_[metadataIdx];
+	ControlList ctrls(ispCtrls_);
+
+	/* Lock the metadata buffer to avoid constant locks/unlocks. */
+	std::unique_lock<RPiController::Metadata> lock(rpiMetadata);
+
+	AwbStatus *awbStatus = rpiMetadata.getLocked<AwbStatus>("awb.status");
+	if (awbStatus)
+		applyAWB(awbStatus, ctrls);
+
+	CcmStatus *ccmStatus = rpiMetadata.getLocked<CcmStatus>("ccm.status");
+	if (ccmStatus)
+		applyCCM(ccmStatus, ctrls);
+
+	AgcStatus *dgStatus = rpiMetadata.getLocked<AgcStatus>("agc.status");
+	if (dgStatus)
+		applyDG(dgStatus, ctrls);
+
+	AlscStatus *lsStatus = rpiMetadata.getLocked<AlscStatus>("alsc.status");
+	if (lsStatus)
+		applyLS(lsStatus, ctrls);
+
+	ContrastStatus *contrastStatus = rpiMetadata.getLocked<ContrastStatus>("contrast.status");
+	if (contrastStatus)
+		applyGamma(contrastStatus, ctrls);
+
+	BlackLevelStatus *blackLevelStatus = rpiMetadata.getLocked<BlackLevelStatus>("black_level.status");
+	if (blackLevelStatus)
+		applyBlackLevel(blackLevelStatus, ctrls);
+
+	GeqStatus *geqStatus = rpiMetadata.getLocked<GeqStatus>("geq.status");
+	if (geqStatus)
+		applyGEQ(geqStatus, ctrls);
+
+	DenoiseStatus *denoiseStatus = rpiMetadata.getLocked<DenoiseStatus>("denoise.status");
+	if (denoiseStatus)
+		applyDenoise(denoiseStatus, ctrls);
+
+	SharpenStatus *sharpenStatus = rpiMetadata.getLocked<SharpenStatus>("sharpen.status");
+	if (sharpenStatus)
+		applySharpen(sharpenStatus, ctrls);
+
+	DpcStatus *dpcStatus = rpiMetadata.getLocked<DpcStatus>("dpc.status");
+	if (dpcStatus)
+		applyDPC(dpcStatus, ctrls);
+
+	if (!ctrls.empty())
+		setIspControls.emit(ctrls);
 
 	/* Ready to push the input buffer into the ISP. */
-	runIsp.emit(data.bayerBufferId & MaskID);
+	runIsp.emit(bufferId & MaskID);
 }
 
 void IPARPi::reportMetadata()
@@ -1005,7 +1059,7 @@ void IPARPi::returnEmbeddedBuffer(unsigned int bufferId)
 	embeddedComplete.emit(bufferId & MaskID);
 }
 
-void IPARPi::prepareISP(const ISPConfig &data)
+void IPARPi::controllerPrepare(const ISPConfig &data)
 {
 	int64_t frameTimestamp = data.controls.get(controls::SensorTimestamp).value_or(0);
 	RPiController::Metadata &rpiMetadata = rpiMetadata_[metadataIdx_];
@@ -1060,55 +1114,7 @@ void IPARPi::prepareISP(const ISPConfig &data)
 	lastRunTimestamp_ = frameTimestamp;
 	processPending_ = true;
 
-	ControlList ctrls(ispCtrls_);
-
 	controller_.prepare(&rpiMetadata);
-
-	/* Lock the metadata buffer to avoid constant locks/unlocks. */
-	std::unique_lock<RPiController::Metadata> lock(rpiMetadata);
-
-	AwbStatus *awbStatus = rpiMetadata.getLocked<AwbStatus>("awb.status");
-	if (awbStatus)
-		applyAWB(awbStatus, ctrls);
-
-	CcmStatus *ccmStatus = rpiMetadata.getLocked<CcmStatus>("ccm.status");
-	if (ccmStatus)
-		applyCCM(ccmStatus, ctrls);
-
-	AgcStatus *dgStatus = rpiMetadata.getLocked<AgcStatus>("agc.status");
-	if (dgStatus)
-		applyDG(dgStatus, ctrls);
-
-	AlscStatus *lsStatus = rpiMetadata.getLocked<AlscStatus>("alsc.status");
-	if (lsStatus)
-		applyLS(lsStatus, ctrls);
-
-	ContrastStatus *contrastStatus = rpiMetadata.getLocked<ContrastStatus>("contrast.status");
-	if (contrastStatus)
-		applyGamma(contrastStatus, ctrls);
-
-	BlackLevelStatus *blackLevelStatus = rpiMetadata.getLocked<BlackLevelStatus>("black_level.status");
-	if (blackLevelStatus)
-		applyBlackLevel(blackLevelStatus, ctrls);
-
-	GeqStatus *geqStatus = rpiMetadata.getLocked<GeqStatus>("geq.status");
-	if (geqStatus)
-		applyGEQ(geqStatus, ctrls);
-
-	DenoiseStatus *denoiseStatus = rpiMetadata.getLocked<DenoiseStatus>("denoise.status");
-	if (denoiseStatus)
-		applyDenoise(denoiseStatus, ctrls);
-
-	SharpenStatus *sharpenStatus = rpiMetadata.getLocked<SharpenStatus>("sharpen.status");
-	if (sharpenStatus)
-		applySharpen(sharpenStatus, ctrls);
-
-	DpcStatus *dpcStatus = rpiMetadata.getLocked<DpcStatus>("dpc.status");
-	if (dpcStatus)
-		applyDPC(dpcStatus, ctrls);
-
-	if (!ctrls.empty())
-		setIspControls.emit(ctrls);
 }
 
 void IPARPi::fillDeviceStatus(const ControlList &sensorControls)
