@@ -104,7 +104,7 @@ class IPARPi : public IPARPiInterface
 {
 public:
 	IPARPi()
-		: controller_(), frameCount_(0), checkCount_(0), mistrustCount_(0),
+		: controller_(), frameCount_(0), mistrustCount_(0),
 		  lastRunTimestamp_(0), lsTable_(nullptr), firstStart_(true)
 	{
 	}
@@ -180,9 +180,6 @@ private:
 	 * display) or mistrusted (i.e. not given to the control algos).
 	 */
 	uint64_t frameCount_;
-
-	/* For checking the sequencing of Prepare/Process calls. */
-	uint64_t checkCount_;
 
 	/* How many frames we should avoid running control algos on. */
 	unsigned int mistrustCount_;
@@ -283,7 +280,6 @@ void IPARPi::start(const ControlList &controls, StartConfig *startConfig)
 	 * or merely a mode switch in a running system.
 	 */
 	frameCount_ = 0;
-	checkCount_ = 0;
 	if (firstStart_) {
 		dropFrameCount_ = helper_->hideFramesStartup();
 		mistrustCount_ = helper_->mistrustFramesStartup();
@@ -510,14 +506,12 @@ void IPARPi::unmapBuffers(const std::vector<unsigned int> &ids)
 
 void IPARPi::signalStatReady(uint32_t bufferId, uint32_t ipaContext)
 {
-	if (++checkCount_ != frameCount_) /* assert here? */
-		LOG(IPARPI, Error) << "WARNING: Prepare/Process mismatch!!!";
 	if (ipaContext_[ipaContext].processPending && frameCount_ > mistrustCount_)
 		processStats(bufferId, ipaContext);
 
 	ControlList &libcameraMetadata = ipaContext_[ipaContext].libcameraMetadata;
 	reportMetadata(ipaContext, libcameraMetadata);
-	statsMetadataComplete.emit(bufferId & MaskID, libcameraMetadata);
+	statsMetadataComplete.emit(bufferId & MaskID, std::move(libcameraMetadata));
 }
 
 void IPARPi::signalQueueRequest(const ControlList &controls)
@@ -555,7 +549,7 @@ uint32_t IPARPi::signalIpaPrepare(const ISPConfig &data)
 	globalMetadata.clear();
 	globalMetadata = ipaContext_[data.ipaControlContext].metadata;
 
-	std::cout << "Current index " << context << " Context index " << data.ipaControlContext << std::endl;
+	std::cout << "IPA: Current index " << context << " Context index " << data.ipaControlContext << std::endl;
 	ipaContextIdx_ = (ipaContextIdx_ + 1) % ipaContext_.size();
 
 	/*
