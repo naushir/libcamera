@@ -548,8 +548,6 @@ uint32_t IPARPi::signalIpaPrepare(const ISPConfig &data)
 	RPiController::Metadata &globalMetadata = controller_.getGlobalMetadata();
 	globalMetadata.clear();
 	globalMetadata = ipaContext_[data.ipaControlContext].metadata;
-
-	std::cout << "IPA: Current index " << context << " Context index " << data.ipaControlContext << std::endl;
 	ipaContextIdx_ = (ipaContextIdx_ + 1) % ipaContext_.size();
 
 	/*
@@ -574,7 +572,7 @@ uint32_t IPARPi::signalIpaPrepare(const ISPConfig &data)
 		 */
 		RPiController::Metadata &lastMetadata =
 			ipaContext_[context == 0 ? ipaContext_.size() - 1 : context - 1].metadata;
-		rpiMetadata.merge(lastMetadata);
+		rpiMetadata.mergeCopy(lastMetadata);
 		ipaContext_[context].processPending = false;
 		return context;
 	}
