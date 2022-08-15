@@ -1138,7 +1138,7 @@ int PipelineHandlerRPi::queueRequestDevice(Camera *camera, Request *request)
 	if (data->state_ == RPiCameraData::State::Stopped)
 		return -EINVAL;
 
-	LOG(RPI, Debug) << "queueRequestDevice: New request.";
+	LOG(RPI, Debug) << "queueRequestDevice: New request " << request;
 
 	/* Push all buffers supplied in the Request to the respective streams. */
 	for (auto stream : data->streams_) {
@@ -1154,6 +1154,9 @@ int PipelineHandlerRPi::queueRequestDevice(Camera *camera, Request *request)
 			 */
 			stream->setExternalBuffer(buffer);
 		}
+		
+		LOG(RPI, Debug) << "queueRequestDevice: buffer " << buffer << " for stream " << stream->name();
+
 		/*
 		 * If no buffer is provided by the request for this stream, we
 		 * queue a nullptr to the stream to signify that it must use an
@@ -1738,13 +1741,16 @@ void RPiCameraData::statsMetadataComplete(uint32_t bufferId, const ControlList &
 	if (state_ == State::Stopped)
 		return;
 
+	LOG(RPI, Debug) << "Stats/Metadata complete for buffer id " << bufferId;
+
 	FrameBuffer *buffer = isp_[Isp::Stats].getBuffers().at(bufferId);
 
 	handleStreamBuffer(buffer, &isp_[Isp::Stats]);
 
 	/* Add to the Request metadata buffer what the IPA has provided. */
 	Request *request = requestReadyQueue_.front().request;
-	request->metadata().merge(controls);
+	if (request)
+		request->metadata().merge(controls);
 
 	/*
 	 * Inform the sensor of the latest colour gains if it has the
@@ -2002,6 +2008,9 @@ void RPiCameraData::handleStreamBuffer(FrameBuffer *buffer, RPi::Stream *stream)
 	 * buffer back to the stream.
 	 */
 	Request *request = requestReadyQueue_.empty() ? nullptr : requestReadyQueue_.front().request;
+
+	LOG(RPI, Debug) << "handleStreamBuffer buffer: " << buffer << " for stream " << stream->name();
+	LOG(RPI, Debug) << "Handle stream buffer request is " << (request ? "non-null" : "null");
 	if (!dropFrameCount_ && request && request->findBuffer(stream) == buffer) {
 		/*
 		 * Check if this is an externally provided buffer, and if
@@ -2013,6 +2022,7 @@ void RPiCameraData::handleStreamBuffer(FrameBuffer *buffer, RPi::Stream *stream)
 		 * application.
 		 */
 		pipe()->completeBuffer(request, buffer);
+		LOG(RPI, Debug) << "Stream  " << stream->name() << " buffer is complete";
 	} else {
 		/*
 		 * This buffer was not part of the Request (which happens if an
@@ -2070,15 +2080,22 @@ void RPiCameraData::checkRequestCompleted()
 	 */
 	if (!dropFrameCount_) {
 		Request *request = requestReadyQueue_.front().request;
-		if (request->hasPendingBuffers())
+
+		for (auto const b : request->buffers())
+			LOG(RPI, Debug) << "checkRequestCompleted request " << request << " buffer " << b.second;
+
+		if (request && request->hasPendingBuffers())
 			return;
 
 		/* Must wait for metadata to be filled in before completing. */
-		if (state_ != State::IpaComplete)
+		if (state_ != State::IpaComplete) {
+			LOG(RPI, Debug) << "Non-complete request, metadata pending";
 			return;
+		}
 
 		pipe()->completeRequest(request);
 		requestCompleted = true;
+		LOG(RPI, Debug) << "Completing request " << request;
 	}
 
 	/*
@@ -2088,6 +2105,7 @@ void RPiCameraData::checkRequestCompleted()
 	if (state_ == State::IpaComplete &&
 	    ((ispOutputCount_ == 3 && dropFrameCount_) || requestCompleted)) {
 		state_ = State::Idle;
+		LOG(RPI, Debug) << "Popping request queue " << requestReadyQueue_.front().request;
 		requestReadyQueue_.pop();
 		if (dropFrameCount_) {
 			dropFrameCount_--;
@@ -2160,27 +2178,38 @@ void RPiCameraData::ipaPrepare()
 {
 	FrameBuffer *embeddedBuffer;
 	BayerFrame bayerFrame;
+	Request *request = nullptr;
 
-	/* If any of our request or buffer queues are empty, we cannot proceed. */
-	if (requestQueue_.empty() || bayerQueue_.empty() ||
-	    (embeddedQueue_.empty() && sensorMetadata_))
-		return;
+	if (dropFrameCount_) {
+		if (state_ != State::Idle || bayerQueue_.empty() ||
+		    (embeddedQueue_.empty() && sensorMetadata_))
+		    return;
 
-	if (!findMatchingBuffers(bayerFrame, embeddedBuffer))
-		return;
+		if (!findMatchingBuffers(bayerFrame, embeddedBuffer))
+			return;
+			
+	} else {
+		/* If any of our request or buffer queues are empty, we cannot proceed. */
+		if (requestQueue_.empty() || bayerQueue_.empty() ||
+		    (embeddedQueue_.empty() && sensorMetadata_))
+			return;
 
-	/* Take the first request from the queue and action the IPA. */
-	Request *request = requestQueue_.front();
-
-	if (!dropFrameCount_)
+		if (!findMatchingBuffers(bayerFrame, embeddedBuffer))
+			return;
+	
+		/* Take the first request from the queue and action the IPA. */
+		request = requestQueue_.front();
 		requestQueue_.pop();
 
-	/*
-	 * Process all the user controls by the IPA. Once this is complete, we
-	 * queue the ISP output buffer listed in the request to start the HW
-	 * pipeline.
-	 */
-	ipa_->signalQueueRequest(request->controls());
+		LOG(RPI, Debug) << "ipaPrepare: signalling queuerequest for request " << request;
+
+		/*
+		* Process all the user controls by the IPA. Once this is complete, we
+		* queue the ISP output buffer listed in the request to start the HW
+		* pipeline.
+		*/
+		ipa_->signalQueueRequest(request->controls());
+	}
 
 	unsigned int bayerId = unicam_[Unicam::Image].getBufferId(bayerFrame.buffer);
 
@@ -2216,20 +2245,26 @@ void RPiCameraData::tryRunPipeline()
 	RequestReadyData &req = requestReadyQueue_.front();
 	Request *request = req.request;
 
-	/* See if a new ScalerCrop value needs to be applied. */
-	applyScalerCrop(request->controls());
+	if (request) {
+		/* See if a new ScalerCrop value needs to be applied. */
+		applyScalerCrop(request->controls());
 
-	/*
-	 * Clear the request metadata and fill it with some initial non-IPA
-	 * related controls. We clear it first because the request metadata
-	 * may have been populated if we have dropped the previous frame.
-	 */
-	request->metadata().clear();
-	fillRequestMetadata(req.controls, request);
+		/*
+		* Clear the request metadata and fill it with some initial non-IPA
+		* related controls. We clear it first because the request metadata
+		* may have been populated if we have dropped the previous frame.
+		*/
+		request->metadata().clear();
+		fillRequestMetadata(req.controls, request);
+	}
 
 	unsigned int bayerId = unicam_[Unicam::Image].getBufferId(req.buffer);
 	ipa_->signalIspPrepare(ipa::RPi::MaskBayerData | bayerId, req.ipaContext);
 
+	LOG(RPI, Debug) << "Signalling signalIspPrepare:"
+			<< " Bayer buffer id: " << bayerId;
+
+	LOG(RPI, Debug) << "tryRunPipeline: running request " << request;
 	std::cout << "PH: ISP prepare index " << req.ipaContext << std::endl;
 	/* Set our state to say the pipeline is active. */
 	state_ = State::Busy;
