@@ -78,6 +78,18 @@ public:
 		data_.merge(other.data_);
 	}
 
+	void mergeCopy(Metadata &other)
+	{
+		std::scoped_lock lock(mutex_, other.mutex_);
+		for (auto &kv : other.data_) {
+			/*
+                        * If the metadata key exists, ignore this item and copy
+                        * only unique key/value pairs.
+                        */
+			data_.insert(kv);
+		}
+	}
+
 	template<typename T>
 	T *getLocked(std::string const &tag)
 	{
