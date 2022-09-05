@@ -208,7 +208,7 @@ public:
 	void runIsp(uint32_t bufferId);
 	void embeddedComplete(uint32_t bufferId);
 	void setIspControls(const ControlList &controls);
-	void setDelayedControls(const ControlList &controls);
+	void setDelayedControls(const ControlList &controls, uint32_t ipaCookie);
 	void setSensorControls(ControlList &controls);
 	void unicamTimeout();
 
@@ -264,6 +264,7 @@ public:
 	struct BayerFrame {
 		FrameBuffer *buffer;
 		ControlList controls;
+		unsigned int ipaCookie;
 	};
 
 	std::queue<BayerFrame> bayerQueue_;
@@ -1789,9 +1790,9 @@ void RPiCameraData::setIspControls(const ControlList &controls)
 	handleState();
 }
 
-void RPiCameraData::setDelayedControls(const ControlList &controls)
+void RPiCameraData::setDelayedControls(const ControlList &controls, uint32_t ipaCookie)
 {
-	if (!delayedCtrls_->push(controls))
+	if (!delayedCtrls_->push(controls, ipaCookie))
 		LOG(RPI, Error) << "V4L2 DelayedControl set failed";
 	handleState();
 }
@@ -1864,13 +1865,13 @@ void RPiCameraData::unicamBufferDequeue(FrameBuffer *buffer)
 		 * Lookup the sensor controls used for this frame sequence from
 		 * DelayedControl and queue them along with the frame buffer.
 		 */
-		auto [ctrl, cookie] = delayedCtrls_->get(buffer->metadata().sequence);
+		auto [ctrl, ipaCookie] = delayedCtrls_->get(buffer->metadata().sequence);
 		/*
 		 * Add the frame timestamp to the ControlList for the IPA to use
 		 * as it does not receive the FrameBuffer object.
 		 */
 		ctrl.set(controls::SensorTimestamp, buffer->metadata().timestamp);
-		bayerQueue_.push({ buffer, std::move(ctrl) });
+		bayerQueue_.push({ buffer, std::move(ctrl), ipaCookie });
 	} else {
 		embeddedQueue_.push(buffer);
 	}
@@ -2165,6 +2166,7 @@ void RPiCameraData::tryRunPipeline()
 	ipa::RPi::ISPConfig ispPrepare;
 	ispPrepare.bayerBufferId = ipa::RPi::MaskBayerData | bayerId;
 	ispPrepare.controls = std::move(bayerFrame.controls);
+	ispPrepare.ipaCookie = bayerFrame.ipaCookie;
 
 	if (embeddedBuffer) {
 		unsigned int embeddedId = unicam_[Unicam::Embedded].getBufferId(embeddedBuffer);
