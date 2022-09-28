@@ -1151,6 +1151,12 @@ int Camera::queueRequest(Request *request)
 		}
 	}
 
+	if (!request->controls().empty())
+		requestSubmitId_++;
+	request->submitId = requestSubmitId_;
+	request->controlListId = request->submitId;
+	request->syncId = 0;
+
 	d->pipe_->invokeMethod(&PipelineHandler::queueRequest,
 			       ConnectionTypeQueued, request);
 
@@ -1186,6 +1192,8 @@ int Camera::start(const ControlList *controls)
 	LOG(Camera, Debug) << "Starting capture";
 
 	ASSERT(d->requestSequence_ == 0);
+
+	requestSubmitId_ = 0;
 
 	ret = d->pipe_->invokeMethod(&PipelineHandler::start,
 				     ConnectionTypeBlocking, this, controls);
