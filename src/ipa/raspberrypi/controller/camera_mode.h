@@ -32,7 +32,7 @@ struct CameraMode {
 	/* scaling of the noise compared to the native sensor mode */
 	double noiseFactor;
 	/* line time */
-	libcamera::utils::Duration lineLength;
+	libcamera::utils::Duration minLineLength, maxLineLength;
 	/* any camera transform *not* reflected already in the camera tuning */
 	libcamera::Transform transform;
 	/* minimum and maximum fame lengths in units of lines */
