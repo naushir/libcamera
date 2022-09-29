@@ -791,7 +791,7 @@ int PipelineHandlerBase::queueRequestDevice(Camera *camera, Request *request)
 	}
 
 	/* Push the request to the back of the queue. */
-	data->requestQueue_.push(request);
+	data->requestQueue_.push_back(request);
 	data->handleState();
 
 	return 0;
@@ -1222,8 +1222,7 @@ void CameraData::metadataReady(const ControlList &metadata)
 
 	/* Add to the Request metadata buffer what the IPA has provided. */
 	/* Last thing to do is to fill up the request metadata. */
-	Request *request = requestQueue_.front();
-	request->metadata().merge(metadata);
+	currentRequest_->metadata().merge(metadata);
 
 	/*
 	 * Inform the sensor of the latest colour gains if it has the
@@ -1251,7 +1250,7 @@ void CameraData::setDelayedControls(const ControlList &controls, uint32_t delayC
 		LOG(RPI, Error) << "V4L2 DelayedControl set failed";
 
 	/* Record which control list corresponds to this ipaCookie. */
-	syncTable_.emplace(SyncTableEntry{ delayContext, requestQueue_.front()->controlListId });
+	syncTable_.emplace(SyncTableEntry{ delayContext, currentRequest_->controlListId });
 }
 
 void CameraData::setLensControls(const ControlList &controls)
@@ -1370,6 +1369,10 @@ void CameraData::clearIncompleteRequests()
 	 * All outstanding requests (and associated buffers) must be returned
 	 * back to the application.
 	 */
+	if (currentRequest_) {
+		requestQueue_.push_front(currentRequest_);
+		currentRequest_ = nullptr;
+	}
 	while (!requestQueue_.empty()) {
 		Request *request = requestQueue_.front();
 
@@ -1386,7 +1389,7 @@ void CameraData::clearIncompleteRequests()
 		}
 
 		pipe()->completeRequest(request);
-		requestQueue_.pop();
+		requestQueue_.pop_front();
 	}
 }
 
@@ -1397,8 +1400,7 @@ void CameraData::handleStreamBuffer(FrameBuffer *buffer, RPi::Stream *stream)
 	 * that we actually have one to action, otherwise we just return
 	 * buffer back to the stream.
 	 */
-	Request *request = requestQueue_.empty() ? nullptr : requestQueue_.front();
-	if (!dropFrameCount_ && request && request->findBuffer(stream) == buffer) {
+	if (!dropFrameCount_ && currentRequest_ && currentRequest_->findBuffer(stream) == buffer) {
 		/*
 		 * Check if this is an externally provided buffer, and if
 		 * so, we must stop tracking it in the pipeline handler.
@@ -1408,7 +1410,7 @@ void CameraData::handleStreamBuffer(FrameBuffer *buffer, RPi::Stream *stream)
 		 * Tag the buffer as completed, returning it to the
 		 * application.
 		 */
-		pipe()->completeBuffer(request, buffer);
+		pipe()->completeBuffer(currentRequest_, buffer);
 	} else {
 		/*
 		 * This buffer was not part of the Request (which happens if an
@@ -1462,16 +1464,15 @@ void CameraData::checkRequestCompleted()
 	 * change the state to IDLE when ready.
 	 */
 	if (!dropFrameCount_) {
-		Request *request = requestQueue_.front();
-		if (request->hasPendingBuffers())
+		if (currentRequest_->hasPendingBuffers())
 			return;
 
 		/* Must wait for metadata to be filled in before completing. */
 		if (state_ != State::IpaComplete)
 			return;
 
-		pipe()->completeRequest(request);
-		requestQueue_.pop();
+		pipe()->completeRequest(currentRequest_);
+		currentRequest_ = nullptr;
 		requestCompleted = true;
 	}
 
