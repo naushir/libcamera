@@ -1108,7 +1108,9 @@ void IPARPi::fillDeviceStatus(const ControlList &sensorControls)
 	int32_t exposureLines = sensorControls.get(V4L2_CID_EXPOSURE).get<int32_t>();
 	int32_t gainCode = sensorControls.get(V4L2_CID_ANALOGUE_GAIN).get<int32_t>();
 	int32_t vblank = sensorControls.get(V4L2_CID_VBLANK).get<int32_t>();
+	int32_t hblank = sensorControls.get(V4L2_CID_HBLANK).get<int32_t>();
 
+	deviceStatus.lineLength = (mode_.width + hblank) * (1.0s / mode_.pixelRate);
 	deviceStatus.shutterSpeed = helper_->exposure(exposureLines, mode_.minLineLength);
 	deviceStatus.analogueGain = helper_->gain(gainCode);
 	deviceStatus.frameLength = mode_.height + vblank;
