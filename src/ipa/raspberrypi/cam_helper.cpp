@@ -19,6 +19,7 @@
 using namespace RPiController;
 using namespace libcamera;
 using libcamera::utils::Duration;
+using namespace std::literals::chrono_literals;
 
 namespace libcamera {
 LOG_DECLARE_CATEGORY(IPARPI)
@@ -100,6 +101,21 @@ uint32_t CamHelper::getVBlanking(Duration &exposure,
 	vblank = std::clamp(exposureLines + frameIntegrationDiff_,
 			    frameLengthMin, frameLengthMax) - mode_.height;
 	return vblank;
+}
+
+Duration CamHelper::hblankToLineLength(uint32_t hblank) const
+{
+	return (mode_.width + hblank) * (1.0s / mode_.pixelRate);
+}
+
+uint32_t CamHelper::lineLengthToHblank(const Duration &lineLength) const
+{
+	return (lineLength * mode_.pixelRate / 1.0s) - mode_.width;
+}
+
+Duration CamHelper::lineLengthPckToDuration(uint32_t lineLengthPck) const
+{
+	return hblankToLineLength(lineLengthPck - mode_.width);
 }
 
 void CamHelper::setCameraMode(const CameraMode &mode)
