@@ -883,9 +883,11 @@ int CameraSensor::sensorInfo(IPACameraSensorInfo *info) const
 		return -EINVAL;
 	}
 
-	int32_t hblank = ctrls.get(V4L2_CID_HBLANK).get<int32_t>();
-	info->lineLength = info->outputSize.width + hblank;
 	info->pixelRate = ctrls.get(V4L2_CID_PIXEL_RATE).get<int64_t>();
+
+	const ControlInfo hblank = ctrls.infoMap()->at(V4L2_CID_HBLANK);
+	info->minLineLength = info->outputSize.width + hblank.min().get<int32_t>();
+	info->maxLineLength = info->outputSize.width + hblank.max().get<int32_t>();
 
 	const ControlInfo vblank = ctrls.infoMap()->at(V4L2_CID_VBLANK);
 	info->minFrameLength = info->outputSize.height + vblank.min().get<int32_t>();
