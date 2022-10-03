@@ -74,6 +74,8 @@ protected:
 	virtual int queueRequestDevice(Camera *camera, Request *request) = 0;
 	virtual void stopDevice(Camera *camera) = 0;
 
+	std::string configurationFile(const std::string &name) const;
+
 	CameraManager *manager_;
 
 private:

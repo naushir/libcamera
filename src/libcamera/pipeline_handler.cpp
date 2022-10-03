@@ -8,6 +8,7 @@
 #include "libcamera/internal/pipeline_handler.h"
 
 #include <chrono>
+#include <sys/stat.h>
 #include <sys/sysmacros.h>
 
 #include <libcamera/base/log.h>
@@ -623,6 +624,62 @@ void PipelineHandler::disconnect()
 		camera->disconnect();
 		manager_->removeCamera(camera);
 	}
+}
+
+/**
+ * \brief Retrieve the absolute path to a platform configuration file
+ * \param[in] name The configuration file name
+ *
+ * This function locates a named platform configuration file and returns
+ * its absolute path to the pipeline handler. It searches the following
+ * directories, in order:
+ *
+ * - If libcamera is not installed, the src/libcamera/pipeline/ directory within
+ *   the source tree ; otherwise
+ * - The system data (share/libcamera/pipeline/) directory.
+ *
+ * The system directories are not searched if libcamera is not installed.
+ *
+ * \return The full path to the pipeline handler configuration file, or an empty
+ * string if no configuration file can be found
+ */
+std::string PipelineHandler::configurationFile(const std::string &name) const
+{
+	struct stat statbuf;
+	int ret;
+
+	std::string root = utils::libcameraSourcePath();
+	if (!root.empty()) {
+		/*
+		 * When libcamera is used before it is installed, load
+		 * configuration files from the source directory. The
+		 * configuration files are then located in the 'data'
+		 * subdirectory of the corresponding IPA module.
+		 */
+		std::string confDir = root + "src/libcamera/pipeline/data";
+
+		LOG(Pipeline, Info)
+			<< "libcamera is not installed. Loading platform configuration file from '"
+			<< confDir << "'";
+
+		std::string confPath = confDir + "/" + name;
+		ret = stat(confPath.c_str(), &statbuf);
+		if (ret == 0 && (statbuf.st_mode & S_IFMT) == S_IFREG)
+			return confPath;
+
+	} else {
+		/* Else look in the system locations. */
+		std::string confPath = std::string(LIBCAMERA_DATA_DIR) + "/pipeline/" + name;
+		ret = stat(confPath.c_str(), &statbuf);
+		if (ret == 0 && (statbuf.st_mode & S_IFMT) == S_IFREG)
+			return confPath;
+	}
+
+	LOG(Pipeline, Error)
+		<< "Configuration file '" << name
+		<< "' not found for pipeline handler '" << PipelineHandler::name() << "'";
+
+	return std::string();
 }
 
 /**
