@@ -149,6 +149,7 @@ public:
 
 	std::deque<Request *> requestQueue_;
 	Request *currentRequest_;
+	uint64_t previousControlListId_;
 
 	/* Store the "native" Bayer order (that is, with no transforms applied). */
 	bool flipsAlterBayerOrder_;
