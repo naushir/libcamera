@@ -297,6 +297,7 @@ public:
 	struct Config {
 		unsigned int minUnicamBuffers;
 		unsigned int minTotalUnicamBuffers;
+		unsigned int numOutput0Buffers;
 	};
 
 	Config config_;
@@ -1401,6 +1402,7 @@ int PipelineHandlerRPi::configurePipelineHandler(RPiCameraData *data)
 	config = {
 		.minUnicamBuffers = 2,
 		.minTotalUnicamBuffers = 4,
+		.numOutput0Buffers = 1,
 	};
 
 	return 0;
@@ -1485,12 +1487,19 @@ int PipelineHandlerRPi::prepareBuffers(Camera *camera)
 			 * so allocate the minimum required to avoid frame drops.
 			 */
 			numBuffers = minBuffers;
-		} else {
+		} else if (stream == &data->isp_[Isp::Output0]) {
 			/*
 			 * Since the ISP runs synchronous with the IPA and requests,
-			 * we only ever need one set of internal buffers. Any buffers
-			 * the application wants to hold onto will already be exported
-			 * through PipelineHandlerRPi::exportFrameBuffers().
+			 * we only ever need a maximum of one internal buffer. Any
+			 * buffers the application wants to hold onto will already
+			 * be exported through PipelineHandlerRPi::exportFrameBuffers().
+			 */
+			numBuffers = std::min(1u, data->config_.numOutput0Buffers);
+		} else {
+			/*
+			 * Same reasoning as above, we only ever need a maximum
+			 * of one internal buffer for Output1 (required for colour
+			 * denoise) and ISP statistics.
 			 */
 			numBuffers = 1;
 		}
