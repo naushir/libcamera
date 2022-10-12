@@ -14,7 +14,7 @@
                 #                             min_total_unicam_buffers - external buffer count)
                 "min_total_unicam_buffers": 4,
                 
-                # The number of internal buffers used for ISP Output0. This must be set to 1.
+                # The number of internal buffers used for ISP Output0.
                 "num_output0_buffers": 1
         }
 }

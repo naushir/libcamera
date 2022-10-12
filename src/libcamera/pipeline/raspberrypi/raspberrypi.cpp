@@ -1080,8 +1080,18 @@ int PipelineHandlerRPi::start(Camera *camera, const ControlList *controls)
 
 	data->state_ = RPiCameraData::State::Idle;
 
-	/* Start all streams. */
+	/*
+	 * Start all streams with the exception of ISP Output0 and Output1 if
+	 * we are dropping some start-up frames. This saves a tiny bit of latency
+	 * and avoids the need for allocating an Output0 buffer only to handle
+	 * startup drop frame conditions.
+	 */
 	for (auto const stream : data->streams_) {
+		if (data->dropFrameCount_ &&
+		    (stream == &data->isp_[Isp::Output0] ||
+		     stream == &data->isp_[Isp::Output1]))
+			continue;
+
 		ret = stream->dev()->streamOn();
 		if (ret) {
 			stop(camera);
@@ -1474,6 +1484,13 @@ int PipelineHandlerRPi::queueAllBuffers(Camera *camera)
 			if (ret < 0)
 				return ret;
 		} else {
+			/*
+			 * We don't enable streaming for Output0 and Output1 for
+			 * startup frame drops, so don't queue any buffers.
+			 */
+			if (stream == &data->isp_[Isp::Output0] ||
+			    stream == &data->isp_[Isp::Output1])
+				continue;
 			/*
 			 * For external streams, we must queue up a set of internal
 			 * buffers to handle the number of drop frames requested by
@@ -2143,16 +2160,26 @@ void RPiCameraData::checkRequestCompleted()
 	}
 
 	/*
-	 * Make sure we have three outputs completed in the case of a dropped
-	 * frame.
+	 * Only the ISP statistics output is generated when we are dropping
+	 * frames on startup.
 	 */
 	if (state_ == State::IpaComplete &&
-	    ((ispOutputCount_ == 3 && dropFrameCount_) || requestCompleted)) {
+	    ((ispOutputCount_ == 1 && dropFrameCount_) || requestCompleted)) {
 		state_ = State::Idle;
 		if (dropFrameCount_) {
 			dropFrameCount_--;
 			LOG(RPI, Debug) << "Dropping frame at the request of the IPA ("
 					<< dropFrameCount_ << " left)";
+
+			/*
+			 * If we ahve finished dropping startup frames, start
+			 * streaming on the ISP Output0 and Output1 nodes for
+			 * normal operation.
+			 */
+			if (!dropFrameCount_) {
+				isp_[Isp::Output0].dev()->streamOn();
+				isp_[Isp::Output1].dev()->streamOn();
+			}
 		}
 	}
 }
