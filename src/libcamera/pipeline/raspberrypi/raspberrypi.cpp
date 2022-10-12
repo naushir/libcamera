@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include <libcamera/base/file.h>
 #include <libcamera/base/shared_fd.h>
 #include <libcamera/base/utils.h>
 
@@ -40,6 +41,7 @@
 #include "libcamera/internal/media_device.h"
 #include "libcamera/internal/pipeline_handler.h"
 #include "libcamera/internal/v4l2_videodevice.h"
+#include "libcamera/internal/yaml_parser.h"
 
 #include "dma_heaps.h"
 #include "rpi_stream.h"
@@ -301,6 +303,7 @@ public:
 	};
 
 	Config config_;
+	unsigned int numUnicamBuffers;
 
 private:
 	void checkRequestCompleted();
@@ -1140,6 +1143,19 @@ int PipelineHandlerRPi::queueRequestDevice(Camera *camera, Request *request)
 			 */
 			stream->setExternalBuffer(buffer);
 		}
+
+		if (!buffer) {
+			if (stream == &data->isp_[Isp::Output0] && !data->config_.numOutput0Buffers) {
+				LOG(RPI, Error) << "Output0 buffer must be provided in the request.";
+				return -EINVAL;
+			}
+
+			if (stream == &data->unicam_[Unicam::Image] && !data->numUnicamBuffers) {
+				LOG(RPI, Error) << "Unicam Image buffer must be provided in the request.";
+				return -EINVAL;
+			}
+		}
+
 		/*
 		 * If no buffer is provided by the request for this stream, we
 		 * queue a nullptr to the stream to signify that it must use an
@@ -1398,12 +1414,51 @@ int PipelineHandlerRPi::registerCamera(MediaDevice *unicam, MediaDevice *isp, Me
 int PipelineHandlerRPi::configurePipelineHandler(RPiCameraData *data)
 {
 	RPiCameraData::Config &config = data->config_;
+	std::string filename;
 
 	config = {
 		.minUnicamBuffers = 2,
 		.minTotalUnicamBuffers = 4,
 		.numOutput0Buffers = 1,
 	};
+
+	char const *configFromEnv = utils::secure_getenv("LIBCAMERA_RPI_CONFIG_FILE");
+	if (!configFromEnv || *configFromEnv == '\0')
+		filename = configurationFile("raspberrypi/default.json");
+	else
+		filename = std::string(configFromEnv);
+
+	if (filename.empty())
+		return -EINVAL;
+
+	File file(filename);
+	if (!file.open(File::OpenModeFlag::ReadOnly)) {
+		LOG(RPI, Error) << "Failed to open configuration file '" << filename << "'";
+		return -EIO;
+	}
+
+	LOG(RPI, Info) << "Using configuration file '" << filename << "'";
+
+	std::unique_ptr<YamlObject> root = YamlParser::parse(file);
+	if (!root) {
+		LOG(RPI, Error) << "Failed to parse configuration file, using defaults!";
+		return -EINVAL;
+	}
+
+	ASSERT((*root)["version"].get<double>() == 1.0);
+
+	const YamlObject &phConfig = (*root)["pipeline_handler"];
+	config.minUnicamBuffers =
+		phConfig["min_unicam_buffers"].get<unsigned int>(config.minUnicamBuffers);
+	config.minTotalUnicamBuffers =
+		phConfig["min_total_unicam_buffers"].get<unsigned int>(config.minTotalUnicamBuffers);
+	config.numOutput0Buffers =
+		phConfig["num_output0_buffers"].get<unsigned int>(config.numOutput0Buffers);
+
+	if (config.minTotalUnicamBuffers < config.minUnicamBuffers || config.minTotalUnicamBuffers < 1) {
+		LOG(RPI, Error) << "Invalid Unicam buffer configuration used!";
+		return -EINVAL;
+	}
 
 	return 0;
 }
@@ -1471,6 +1526,7 @@ int PipelineHandlerRPi::prepareBuffers(Camera *camera)
 			 */
 			numBuffers = std::max<int>(data->config_.minUnicamBuffers,
 						   minBuffers - numRawBuffers);
+			data->numUnicamBuffers = numBuffers;
 		} else if (stream == &data->isp_[Isp::Input]) {
 			/*
 			 * ISP input buffers are imported from Unicam, so follow

@@ -1,0 +1,20 @@
+{
+        "version": 1.0,
+        "target": "bcm2835",
+
+        "pipeline_handler":
+        {
+                # The minimum number of internal buffers to be allocated for Unicam.
+                # This value must be greater than 0, but less than or equal to min_total_unicam_buffers
+                "min_unicam_buffers": 2,
+
+                # The minimum total (internal + external) buffer count used for Unicam.
+                # The number of internal buffers allocated for Unicam is given by:
+                # internal buffer count = max(min_unicam_buffers,
+                #                             min_total_unicam_buffers - external buffer count)
+                "min_total_unicam_buffers": 4,
+                
+                # The number of internal buffers used for ISP Output0. This must be set to 1.
+                "num_output0_buffers": 1
+        }
+}
