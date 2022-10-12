@@ -294,6 +294,13 @@ public:
 	/* Have internal buffers been allocated? */
 	bool buffersAllocated_;
 
+	struct Config {
+		unsigned int minUnicamBuffers;
+		unsigned int minTotalUnicamBuffers;
+	};
+
+	Config config_;
+
 private:
 	void checkRequestCompleted();
 	void fillRequestMetadata(const ControlList &bufferControls,
@@ -343,6 +350,7 @@ private:
 	}
 
 	int registerCamera(MediaDevice *unicam, MediaDevice *isp, MediaEntity *sensorEntity);
+	int configurePipelineHandler(RPiCameraData *data);
 	int queueAllBuffers(Camera *camera);
 	int prepareBuffers(Camera *camera);
 	void mapBuffers(Camera *camera, const RPi::BufferMap &buffers, unsigned int mask);
@@ -1368,6 +1376,12 @@ int PipelineHandlerRPi::registerCamera(MediaDevice *unicam, MediaDevice *isp, Me
 	streams.insert(&data->isp_[Isp::Output0]);
 	streams.insert(&data->isp_[Isp::Output1]);
 
+	int ret = configurePipelineHandler(data.get());
+	if (ret) {
+		LOG(RPI, Error) << "Unable to configure the pipeline handler!";
+		return ret;
+	}
+
 	/* Create and register the camera. */
 	const std::string &id = data->sensor_->id();
 	std::shared_ptr<Camera> camera =
@@ -1377,6 +1391,18 @@ int PipelineHandlerRPi::registerCamera(MediaDevice *unicam, MediaDevice *isp, Me
 	LOG(RPI, Info) << "Registered camera " << id
 		       << " to Unicam device " << unicam->deviceNode()
 		       << " and ISP device " << isp->deviceNode();
+	return 0;
+}
+
+int PipelineHandlerRPi::configurePipelineHandler(RPiCameraData *data)
+{
+	RPiCameraData::Config &config = data->config_;
+
+	config = {
+		.minUnicamBuffers = 2,
+		.minTotalUnicamBuffers = 4,
+	};
+
 	return 0;
 }
 
@@ -1430,25 +1456,28 @@ int PipelineHandlerRPi::prepareBuffers(Camera *camera)
 	for (auto const stream : data->streams_) {
 		unsigned int numBuffers;
 		/*
-		 * For Unicam, allocate a minimum of 4 buffers as we want
-		 * to avoid any frame drops.
+		 * For Unicam, allocate a minimum number of buffers for internal
+		 * use as we want to avoid any frame drops.
 		 */
-		constexpr unsigned int minBuffers = 4;
+		const unsigned int minBuffers = data->config_.minTotalUnicamBuffers;
 		if (stream == &data->unicam_[Unicam::Image]) {
 			/*
 			 * If an application has configured a RAW stream, allocate
 			 * additional buffers to make up the minimum, but ensure
-			 * we have at least 2 sets of internal buffers to use to
-			 * minimise frame drops.
+			 * we have at least minUnicamBuffers sets of internal
+			 * buffers to use to minimise frame drops.
 			 */
-			numBuffers = std::max<int>(2, minBuffers - numRawBuffers);
+			numBuffers = std::max<int>(data->config_.minUnicamBuffers,
+						   minBuffers - numRawBuffers);
 		} else if (stream == &data->isp_[Isp::Input]) {
 			/*
 			 * ISP input buffers are imported from Unicam, so follow
 			 * similar logic as above to count all the RAW buffers
 			 * available.
 			 */
-			numBuffers = numRawBuffers + std::max<int>(2, minBuffers - numRawBuffers);
+			numBuffers = numRawBuffers +
+				     std::max<int>(data->config_.minUnicamBuffers,
+						   minBuffers - numRawBuffers);
 
 		} else if (stream == &data->unicam_[Unicam::Embedded]) {
 			/*
