@@ -5,7 +5,7 @@
         "pipeline_handler":
         {
                 # The minimum number of internal buffers to be allocated for Unicam.
-                # This value must be greater than 0, but less than or equal to min_total_unicam_buffers
+                # This value must less than or equal to min_total_unicam_buffers
                 "min_unicam_buffers": 2,
 
                 # The minimum total (internal + external) buffer count used for Unicam.
@@ -15,6 +15,9 @@
                 "min_total_unicam_buffers": 4,
                 
                 # The number of internal buffers used for ISP Output0.
-                "num_output0_buffers": 1
+                "num_output0_buffers": 1,
+
+                # Override any request from the IPA to drop a number of startup frames.
+                "disable_startup_frame_drops": false
         }
 }

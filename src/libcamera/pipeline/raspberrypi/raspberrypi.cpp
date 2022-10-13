@@ -300,6 +300,7 @@ public:
 		unsigned int minUnicamBuffers;
 		unsigned int minTotalUnicamBuffers;
 		unsigned int numOutput0Buffers;
+		bool disableStartupFrameDrops;
 	};
 
 	Config config_;
@@ -1044,7 +1045,7 @@ int PipelineHandlerRPi::start(Camera *camera, const ControlList *controls)
 		data->setSensorControls(startConfig.controls);
 
 	/* Configure the number of dropped frames required on startup. */
-	data->dropFrameCount_ = startConfig.dropFrameCount;
+	data->dropFrameCount_ = data->config_.disableStartupFrameDrops ? 0 : startConfig.dropFrameCount;
 
 	for (auto const stream : data->streams_)
 		stream->resetBuffers();
@@ -1430,6 +1431,7 @@ int PipelineHandlerRPi::configurePipelineHandler(RPiCameraData *data)
 		.minUnicamBuffers = 2,
 		.minTotalUnicamBuffers = 4,
 		.numOutput0Buffers = 1,
+		.disableStartupFrameDrops = false,
 	};
 
 	char const *configFromEnv = utils::secure_getenv("LIBCAMERA_RPI_CONFIG_FILE");
@@ -1464,6 +1466,8 @@ int PipelineHandlerRPi::configurePipelineHandler(RPiCameraData *data)
 		phConfig["min_total_unicam_buffers"].get<unsigned int>(config.minTotalUnicamBuffers);
 	config.numOutput0Buffers =
 		phConfig["num_output0_buffers"].get<unsigned int>(config.numOutput0Buffers);
+	config.disableStartupFrameDrops =
+		phConfig["disable_startup_frame_drops"].get<bool>(config.disableStartupFrameDrops);
 
 	if (config.minTotalUnicamBuffers < config.minUnicamBuffers || config.minTotalUnicamBuffers < 1) {
 		LOG(RPI, Error) << "Invalid Unicam buffer configuration used!";
@@ -1543,6 +1547,15 @@ int PipelineHandlerRPi::prepareBuffers(Camera *camera)
 			 */
 			numBuffers = std::max<int>(data->config_.minUnicamBuffers,
 						   minBuffers - numRawBuffers);
+
+			if (numBuffers == 0 && data->dropFrameCount_) {
+				LOG(RPI, Warning)
+					<< "Configured with no Unicam buffers,"
+					   " but the IPA requested startup frame drops."
+					   " Increasing to one buffer.";
+				numBuffers = 1;
+			}
+
 			data->numUnicamBuffers = numBuffers;
 		} else if (stream == &data->isp_[Isp::Input]) {
 			/*
