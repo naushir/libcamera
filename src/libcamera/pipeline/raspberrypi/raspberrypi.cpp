@@ -301,6 +301,7 @@ public:
 		unsigned int minTotalUnicamBuffers;
 		unsigned int numOutput0Buffers;
 		bool disableStartupFrameDrops;
+		bool returnNewestFrames;
 	};
 
 	Config config_;
@@ -1432,6 +1433,7 @@ int PipelineHandlerRPi::configurePipelineHandler(RPiCameraData *data)
 		.minTotalUnicamBuffers = 4,
 		.numOutput0Buffers = 1,
 		.disableStartupFrameDrops = false,
+		.returnNewestFrames = false,
 	};
 
 	char const *configFromEnv = utils::secure_getenv("LIBCAMERA_RPI_CONFIG_FILE");
@@ -1468,6 +1470,8 @@ int PipelineHandlerRPi::configurePipelineHandler(RPiCameraData *data)
 		phConfig["num_output0_buffers"].get<unsigned int>(config.numOutput0Buffers);
 	config.disableStartupFrameDrops =
 		phConfig["disable_startup_frame_drops"].get<bool>(config.disableStartupFrameDrops);
+	config.returnNewestFrames =
+		phConfig["return_newest_frames"].get<bool>(config.returnNewestFrames);
 
 	if (config.minTotalUnicamBuffers < config.minUnicamBuffers || config.minTotalUnicamBuffers < 1) {
 		LOG(RPI, Error) << "Invalid Unicam buffer configuration used!";
@@ -2319,6 +2323,21 @@ bool RPiCameraData::findMatchingBuffers(BayerFrame &bayerFrame, FrameBuffer *&em
 {
 	if (bayerQueue_.empty())
 		return false;
+
+	/*
+	 * If the pipeline is configured to only ever return the most recently
+	 * captured frame, empty the buffer queue until a single element is
+	 * left, corresponding to the most recent buffer. Note that this will
+	 * likely result in possibly avoidable dropped frames.
+	 */
+	if (config_.returnNewestFrames && !unicam_[Unicam::Image].isExternal()) {
+		while (bayerQueue_.size() > 1) {
+			FrameBuffer *bayer = bayerQueue_.front().buffer;
+
+			unicam_[Unicam::Image].returnBuffer(bayer);
+			bayerQueue_.pop();
+		}
+	}
 
 	/*
 	 * Find the embedded data buffer with a matching timestamp to pass to

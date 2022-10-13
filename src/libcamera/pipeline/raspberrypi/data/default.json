@@ -18,6 +18,11 @@
                 "num_output0_buffers": 1,
 
                 # Override any request from the IPA to drop a number of startup frames.
-                "disable_startup_frame_drops": false
+                "disable_startup_frame_drops": false,
+
+                # Always process a pending request with the last captured sensor frame.
+                # Note that this might lead to avoidable frame drops during periods
+                # of transient heavey CPU loading.
+                "return_newest_frames": false
         }
 }
