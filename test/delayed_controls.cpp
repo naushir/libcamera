@@ -82,7 +82,7 @@ protected:
 		/* Reset control to value not used in test. */
 		ctrls.set(V4L2_CID_BRIGHTNESS, 1);
 		dev_->setControls(&ctrls);
-		delayed->reset();
+		delayed->reset(0);
 
 		/* Trigger the first frame start event */
 		delayed->applyControls(0);
@@ -92,11 +92,11 @@ protected:
 			int32_t value = 100 + i;
 
 			ctrls.set(V4L2_CID_BRIGHTNESS, value);
-			delayed->push(ctrls);
+			delayed->push(ctrls, i);
 
 			delayed->applyControls(i);
 
-			ControlList result = delayed->get(i);
+			auto [result, cookie] = delayed->get(i);
 			int32_t brightness = result.get(V4L2_CID_BRIGHTNESS).get<int32_t>();
 			if (brightness != value) {
 				cerr << "Failed single control without delay"
@@ -124,7 +124,7 @@ protected:
 		int32_t expected = 4;
 		ctrls.set(V4L2_CID_BRIGHTNESS, expected);
 		dev_->setControls(&ctrls);
-		delayed->reset();
+		delayed->reset(0);
 
 		/* Trigger the first frame start event */
 		delayed->applyControls(0);
@@ -134,11 +134,11 @@ protected:
 			int32_t value = 10 + i;
 
 			ctrls.set(V4L2_CID_BRIGHTNESS, value);
-			delayed->push(ctrls);
+			delayed->push(ctrls, i);
 
 			delayed->applyControls(i);
 
-			ControlList result = delayed->get(i);
+			auto [result, cookie] = delayed->get(i);
 			int32_t brightness = result.get(V4L2_CID_BRIGHTNESS).get<int32_t>();
 			if (brightness != expected) {
 				cerr << "Failed single control with delay"
@@ -172,7 +172,7 @@ protected:
 		ctrls.set(V4L2_CID_BRIGHTNESS, expected);
 		ctrls.set(V4L2_CID_CONTRAST, expected + 1);
 		dev_->setControls(&ctrls);
-		delayed->reset();
+		delayed->reset(0);
 
 		/* Trigger the first frame start event */
 		delayed->applyControls(0);
@@ -183,11 +183,11 @@ protected:
 
 			ctrls.set(V4L2_CID_BRIGHTNESS, value);
 			ctrls.set(V4L2_CID_CONTRAST, value + 1);
-			delayed->push(ctrls);
+			delayed->push(ctrls, i);
 
 			delayed->applyControls(i);
 
-			ControlList result = delayed->get(i);
+			auto [result, cookie] = delayed->get(i);
 			int32_t brightness = result.get(V4L2_CID_BRIGHTNESS).get<int32_t>();
 			int32_t contrast = result.get(V4L2_CID_CONTRAST).get<int32_t>();
 			if (brightness != expected || contrast != expected + 1) {
@@ -223,7 +223,7 @@ protected:
 		ctrls.set(V4L2_CID_BRIGHTNESS, expected);
 		ctrls.set(V4L2_CID_CONTRAST, expected);
 		dev_->setControls(&ctrls);
-		delayed->reset();
+		delayed->reset(0);
 
 		/* Trigger the first frame start event */
 		delayed->applyControls(0);
@@ -238,7 +238,7 @@ protected:
 
 			ctrls.set(V4L2_CID_BRIGHTNESS, value);
 			ctrls.set(V4L2_CID_CONTRAST, value);
-			delayed->push(ctrls);
+			delayed->push(ctrls, i);
 		}
 
 		/* Process all queued controls. */
@@ -247,7 +247,7 @@ protected:
 
 			delayed->applyControls(i);
 
-			ControlList result = delayed->get(i);
+			auto [result, cookie] = delayed->get(i);
 
 			int32_t brightness = result.get(V4L2_CID_BRIGHTNESS).get<int32_t>();
 			int32_t contrast = result.get(V4L2_CID_CONTRAST).get<int32_t>();

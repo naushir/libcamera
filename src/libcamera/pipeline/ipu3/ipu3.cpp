@@ -789,7 +789,7 @@ int PipelineHandlerIPU3::start(Camera *camera, [[maybe_unused]] const ControlLis
 	if (ret)
 		goto error;
 
-	data->delayedCtrls_->reset();
+	data->delayedCtrls_->reset(0);
 
 	/*
 	 * Start the ImgU video devices, buffers will be queued to the
@@ -1265,11 +1265,11 @@ int IPU3CameraData::loadIPA()
 	return 0;
 }
 
-void IPU3CameraData::setSensorControls([[maybe_unused]] unsigned int id,
+void IPU3CameraData::setSensorControls(unsigned int id,
 				       const ControlList &sensorControls,
 				       const ControlList &lensControls)
 {
-	delayedCtrls_->push(sensorControls);
+	delayedCtrls_->push(sensorControls, id);
 
 	CameraLens *focusLens = cio2_.sensor()->focusLens();
 	if (!focusLens)
@@ -1389,7 +1389,8 @@ void IPU3CameraData::cio2BufferReady(FrameBuffer *buffer)
 	request->metadata().set(controls::SensorTimestamp,
 				buffer->metadata().timestamp);
 
-	info->effectiveSensorControls = delayedCtrls_->get(buffer->metadata().sequence);
+	auto [controls, cookie] = delayedCtrls_->get(buffer->metadata().sequence);
+	info->effectiveSensorControls = std::move(controls);
 
 	if (request->findBuffer(&rawStream_))
 		pipe()->completeBuffer(request, buffer);

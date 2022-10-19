@@ -376,10 +376,10 @@ void RkISP1CameraData::paramFilled(unsigned int frame)
 		selfPath_->queueBuffer(info->selfPathBuffer);
 }
 
-void RkISP1CameraData::setSensorControls([[maybe_unused]] unsigned int frame,
+void RkISP1CameraData::setSensorControls(unsigned int frame,
 					 const ControlList &sensorControls)
 {
-	delayedCtrls_->push(sensorControls);
+	delayedCtrls_->push(sensorControls, frame);
 }
 
 void RkISP1CameraData::metadataReady(unsigned int frame, const ControlList &metadata)
@@ -1191,8 +1191,9 @@ void PipelineHandlerRkISP1::statReady(FrameBuffer *buffer)
 	if (data->frame_ <= buffer->metadata().sequence)
 		data->frame_ = buffer->metadata().sequence + 1;
 
+	auto [controls, cookie] = data->delayedCtrls_->get(buffer->metadata().sequence);
 	data->ipa_->processStatsBuffer(info->frame, info->statBuffer->cookie(),
-				       data->delayedCtrls_->get(buffer->metadata().sequence));
+				       controls);
 }
 
 REGISTER_PIPELINE_HANDLER(PipelineHandlerRkISP1)
