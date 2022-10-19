@@ -267,6 +267,93 @@ protected:
 		return TestPass;
 	}
 
+	int cookieValue()
+	{
+		std::unordered_map<uint32_t, DelayedControls::ControlParams> delays = {
+			{ V4L2_CID_BRIGHTNESS, { 1, false } },
+		};
+		std::unique_ptr<DelayedControls> delayed =
+			std::make_unique<DelayedControls>(dev_.get(), delays);
+		ControlList ctrls;
+
+		/* Set a cookie to the reset value. */
+		const unsigned int startCookie = 0x1234;
+		ctrls.set(V4L2_CID_BRIGHTNESS, 1);
+		dev_->setControls(&ctrls);
+		delayed->reset(startCookie);
+
+		/* Trigger the first frame start event */
+		delayed->applyControls(0);
+
+		for (unsigned int i = 1; i < 100; i++) {
+			ctrls.set(V4L2_CID_BRIGHTNESS, 1);
+			delayed->push(ctrls, startCookie + i);
+
+			delayed->applyControls(i);
+
+			auto [result, cookie] = delayed->get(i);
+			unsigned int expected = startCookie + i - 1;
+			if (cookie != expected) {
+				cerr << "Failed cookie value"
+				     << " frame " << i
+				     << " expected cookie " << expected
+				     << " got cookie " << cookie
+				     << endl;
+				return TestFail;
+			}
+		}
+
+		return TestPass;
+	}
+
+	int cookieSkip()
+	{
+		std::unordered_map<uint32_t, DelayedControls::ControlParams> delays = {
+			{ V4L2_CID_BRIGHTNESS, { 1, false } },
+		};
+		std::unique_ptr<DelayedControls> delayed =
+			std::make_unique<DelayedControls>(dev_.get(), delays);
+		ControlList ctrls;
+
+		/* Set a cookie to the reset value. */
+		unsigned int cookie = 0x1234;
+		ctrls.set(V4L2_CID_BRIGHTNESS, 1);
+		dev_->setControls(&ctrls);
+		delayed->reset(cookie);
+
+		/* Trigger the first frame start event */
+		delayed->applyControls(0);
+
+		unsigned int expected = cookie++;
+		for (unsigned int i = 1; i < 100; i++) {
+			/*
+			 * Send a control for 2 out of every 3 frames, simulating
+			 * some frame skips.
+			 */
+			if (i % 3) {
+				ctrls.set(V4L2_CID_BRIGHTNESS, 1);
+				delayed->push(ctrls, cookie);
+			}
+
+			delayed->applyControls(i);
+
+			auto [result, getCookie] = delayed->get(i);
+			if (expected != getCookie) {
+				cerr << "Failed cookie value"
+				     << " frame " << i
+				     << " expected cookie " << expected
+				     << " got cookie " << getCookie
+				     << endl;
+				return TestFail;
+			}
+
+			if (i % 3)
+				expected = cookie++;
+		}
+
+		return TestPass;
+	}
+
 	int run() override
 	{
 		int ret;
@@ -288,6 +375,16 @@ protected:
 
 		/* Test control values produced faster than consumed. */
 		ret = dualControlsMultiQueue();
+		if (ret)
+			return ret;
+
+		/* Test cookie values. */
+		ret = cookieValue();
+		if (ret)
+			return ret;
+
+		/* Test cookie values with frame skips. */
+		ret = cookieSkip();
 		if (ret)
 			return ret;
 
