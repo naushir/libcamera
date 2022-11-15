@@ -32,9 +32,10 @@ void Focus::process(StatisticsPtr &stats, Metadata *imageMetadata)
 {
 	FocusStatus status;
 	unsigned int i;
-	for (i = 0; i < FOCUS_REGIONS; i++)
-		status.focusMeasures[i] = stats->focus_stats[i].contrast_val[1][1] / 1000;
-	status.num = i;
+	uint32_t counted, uncounted;
+	for (i = 0; i < stats->focusRegions.numRegions(); i++)
+		status.focusMeasures[i] = stats->focusRegions.get(i, counted, uncounted);
+	status.num = stats->focusRegions.numRegions();
 	imageMetadata->set("focus.status", status);
 
 	LOG(RPiFocus, Debug)

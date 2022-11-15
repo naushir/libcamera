@@ -21,9 +21,6 @@ LOG_DEFINE_CATEGORY(RPiAwb)
 
 #define NAME "rpi.awb"
 
-static constexpr unsigned int AwbStatsSizeX = DEFAULT_AWB_REGIONS_X;
-static constexpr unsigned int AwbStatsSizeY = DEFAULT_AWB_REGIONS_Y;
-
 /*
  * todo - the locking in this algorithm needs some tidying up as has been done
  * elsewhere (ALSC and AGC).
@@ -406,17 +403,18 @@ void Awb::asyncFunc()
 }
 
 static void generateStats(std::vector<Awb::RGB> &zones,
-			  bcm2835_isp_stats_region *stats, double minPixels,
+			  RgbRegions &stats, double minPixels,
 			  double minG)
 {
-	for (unsigned int i = 0; i < AwbStatsSizeX * AwbStatsSizeY; i++) {
+	for (unsigned int i = 0; i < stats.numRegions(); i++) {
 		Awb::RGB zone;
-		double counted = stats[i].counted;
+		uint32_t counted, uncounted;
+		auto s = stats.get(i, counted, uncounted);
 		if (counted >= minPixels) {
-			zone.G = stats[i].g_sum / counted;
+			zone.G = s.gSum / counted;
 			if (zone.G >= minG) {
-				zone.R = stats[i].r_sum / counted;
-				zone.B = stats[i].b_sum / counted;
+				zone.R = s.rSum / counted;
+				zone.B = s.bSum / counted;
 				zones.push_back(zone);
 			}
 		}
@@ -430,7 +428,7 @@ void Awb::prepareStats()
 	 * LSC has already been applied to the stats in this pipeline, so stop
 	 * any LSC compensation.  We also ignore config_.fast in this version.
 	 */
-	generateStats(zones_, statistics_->awb_stats, config_.minPixels,
+	generateStats(zones_, statistics_->awbRegions, config_.minPixels,
 		      config_.minG);
 	/*
 	 * apply sensitivities, so values appear to come from our "canonical"
@@ -646,7 +644,7 @@ void Awb::awbBayes()
 	 * valid... not entirely sure about this.
 	 */
 	Pwl prior = interpolatePrior();
-	prior *= zones_.size() / (double)(AwbStatsSizeX * AwbStatsSizeY);
+	prior *= zones_.size() / (double)(statistics_->awbRegions.numRegions());
 	prior.map([](double x, double y) {
 		LOG(RPiAwb, Debug) << "(" << x << "," << y << ")";
 	});

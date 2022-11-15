@@ -66,4 +66,6 @@ struct Statistics {
 	FocusRegions focusRegions;
 };
 
+using StatisticsPtr = std::shared_ptr<Statistics>;
+
 } /* namespace RPiController */

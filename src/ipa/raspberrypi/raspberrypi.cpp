@@ -51,6 +51,7 @@
 #include "metadata.h"
 #include "sharpen_algorithm.h"
 #include "sharpen_status.h"
+#include "statistics.h"
 
 namespace libcamera {
 
@@ -136,6 +137,7 @@ private:
 	void prepareISP(const ISPConfig &data);
 	void reportMetadata();
 	void fillDeviceStatus(const ControlList &sensorControls);
+	RPiController::StatisticsPtr fillStatistics(bcm2835_isp_stats *stats) const;
 	void processStats(unsigned int bufferId);
 	void applyFrameDurations(Duration minFrameDuration, Duration maxFrameDuration);
 	void applyAGC(const struct AgcStatus *agcStatus, ControlList &ctrls);
@@ -1119,6 +1121,41 @@ void IPARPi::fillDeviceStatus(const ControlList &sensorControls)
 	rpiMetadata_.set("device.status", deviceStatus);
 }
 
+RPiController::StatisticsPtr IPARPi::fillStatistics(bcm2835_isp_stats *stats) const
+{
+	using namespace RPiController;
+
+	unsigned int i;
+	StatisticsPtr statistics =
+		std::make_unique<Statistics>(Statistics::AgcStatsPos::PreWb, Statistics::ColourStatsPos::PostLsc);
+
+	/* RGB histograms are not used, so do not populate them. */
+	statistics->yHist = std::move(RPiController::Histogram(stats->hist[0].g_hist, NUM_HISTOGRAM_BINS));
+
+	statistics->awbRegions.init(DEFAULT_AWB_REGIONS_X, DEFAULT_AWB_REGIONS_Y);
+	for (i = 0; i < statistics->awbRegions.numRegions(); i++)
+		statistics->awbRegions.set(i, { stats->awb_stats[i].r_sum,
+						stats->awb_stats[i].g_sum,
+						stats->awb_stats[i].b_sum },
+					   stats->awb_stats[i].counted, stats->awb_stats[i].notcounted);
+
+	/* There are only ever 15 regions computed by the firmware, but the HW defines AGC_REGIONS == 16! */
+	statistics->agcRegions.init(15);
+	for (i = 0; i < statistics->agcRegions.numRegions(); i++)
+		statistics->agcRegions.set(i, { stats->agc_stats[i].r_sum,
+						stats->agc_stats[i].g_sum,
+						stats->agc_stats[i].b_sum },
+					   stats->agc_stats[i].counted, 0);
+
+	statistics->focusRegions.init(4, 3);
+	for (i = 0; i < FOCUS_REGIONS; i++)
+		statistics->focusRegions.set(i, stats->focus_stats[i].contrast_val[1][1] / 1000,
+					     stats->focus_stats[i].contrast_val_num[1][1],
+					     stats->focus_stats[i].contrast_val_num[1][0]);
+
+	return statistics;
+}
+
 void IPARPi::processStats(unsigned int bufferId)
 {
 	auto it = buffers_.find(bufferId);
@@ -1129,7 +1166,7 @@ void IPARPi::processStats(unsigned int bufferId)
 
 	Span<uint8_t> mem = it->second.planes()[0];
 	bcm2835_isp_stats *stats = reinterpret_cast<bcm2835_isp_stats *>(mem.data());
-	RPiController::StatisticsPtr statistics = std::make_shared<bcm2835_isp_stats>(*stats);
+	RPiController::StatisticsPtr statistics = fillStatistics(stats);
 	helper_->process(statistics, rpiMetadata_);
 	controller_.process(statistics, &rpiMetadata_);
 
