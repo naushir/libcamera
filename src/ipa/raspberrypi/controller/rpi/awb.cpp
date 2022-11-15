@@ -433,11 +433,6 @@ void Awb::prepareStats()
 	generateStats(zones_, statistics_->awb_stats, config_.minPixels,
 		      config_.minG);
 	/*
-	 * we're done with these; we may as well relinquish our hold on the
-	 * pointer.
-	 */
-	statistics_.reset();
-	/*
 	 * apply sensitivities, so values appear to come from our "canonical"
 	 * sensor.
 	 */
@@ -733,6 +728,11 @@ void Awb::doAwb()
 			<< " with gains r " << asyncResults_.gainR
 			<< " and b " << asyncResults_.gainB;
 	}
+	/*
+	 * we're done with these; we may as well relinquish our hold on the
+	 * pointer.
+	 */
+	statistics_.reset();
 }
 
 /* Register algorithm with the system. */
