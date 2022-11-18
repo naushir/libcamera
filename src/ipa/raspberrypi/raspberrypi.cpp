@@ -1132,11 +1132,15 @@ RPiController::StatisticsPtr IPARPi::fillStatistics(bcm2835_isp_stats *stats) co
 	/* RGB histograms are not used, so do not populate them. */
 	statistics->yHist = std::move(RPiController::Histogram(stats->hist[0].g_hist, NUM_HISTOGRAM_BINS));
 
+	/*
+	 * All region sums are based on a 13-bit pipeline bit-depth. Normalise
+	 * this to 16-bits for the AGC/AWB/ALSC algorithms.
+	 */
 	statistics->awbRegions.init({ DEFAULT_AWB_REGIONS_X, DEFAULT_AWB_REGIONS_Y });
 	for (i = 0; i < statistics->awbRegions.numRegions(); i++)
-		statistics->awbRegions.set(i, { { stats->awb_stats[i].r_sum,
-						  stats->awb_stats[i].g_sum,
-						  stats->awb_stats[i].b_sum },
+		statistics->awbRegions.set(i, { { stats->awb_stats[i].r_sum << 3,
+						  stats->awb_stats[i].g_sum << 3,
+						  stats->awb_stats[i].b_sum << 3 },
 						stats->awb_stats[i].counted,
 						stats->awb_stats[i].notcounted });
 
@@ -1146,9 +1150,9 @@ RPiController::StatisticsPtr IPARPi::fillStatistics(bcm2835_isp_stats *stats) co
 	 */
 	statistics->agcRegions.init(15);
 	for (i = 0; i < statistics->agcRegions.numRegions(); i++)
-		statistics->agcRegions.set(i, { { stats->agc_stats[i].r_sum,
-						  stats->agc_stats[i].g_sum,
-						  stats->agc_stats[i].b_sum },
+		statistics->agcRegions.set(i, { { stats->agc_stats[i].r_sum << 3,
+						  stats->agc_stats[i].g_sum << 3,
+						  stats->agc_stats[i].b_sum << 3 },
 						stats->agc_stats[i].counted,
 						stats->awb_stats[i].notcounted });
 
