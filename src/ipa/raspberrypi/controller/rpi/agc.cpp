@@ -28,8 +28,6 @@ LOG_DEFINE_CATEGORY(RPiAgc)
 
 #define NAME "rpi.agc"
 
-static constexpr unsigned int PipelineBits = 13; /* seems to be a 13-bit pipeline */
-
 int AgcMeteringMode::read(const libcamera::YamlObject &params)
 {
 	const YamlObject &yamlWeights = params["weights"];
@@ -593,9 +591,9 @@ static double computeInitialY(StatisticsPtr &stats, AwbStatus const &awb,
 	for (unsigned int i = 0; i < stats->agcRegions.numRegions(); i++) {
 		uint32_t counted, uncounted;
 		auto s = stats->agcRegions.get(i, counted, uncounted);
-		double rAcc = std::min<double>(s.rSum * gain, ((1 << PipelineBits) - 1) * counted);
-		double gAcc = std::min<double>(s.gSum * gain, ((1 << PipelineBits) - 1) * counted);
-		double bAcc = std::min<double>(s.bSum * gain, ((1 << PipelineBits) - 1) * counted);
+		double rAcc = std::min<double>(s.rSum * gain, ((1 << 16) - 1) * counted);
+		double gAcc = std::min<double>(s.gSum * gain, ((1 << 16) - 1) * counted);
+		double bAcc = std::min<double>(s.bSum * gain, ((1 << 16) - 1) * counted);
 		rSum += rAcc * weights[i];
 		gSum += gAcc * weights[i];
 		bSum += bAcc * weights[i];
@@ -608,7 +606,7 @@ static double computeInitialY(StatisticsPtr &stats, AwbStatus const &awb,
 	double ySum = rSum * awb.gainR * .299 +
 		      gSum * awb.gainG * .587 +
 		      bSum * awb.gainB * .114;
-	return ySum / pixelSum / (1 << PipelineBits);
+	return ySum / pixelSum / (1 << 16);
 }
 
 /*
