@@ -31,6 +31,12 @@ using FocusRegions = RegionStats<uint64_t>;
 
 struct Statistics {
 	/*
+	 * All histogram and region based statistics are scaled to a maximum
+	 * value given by (1 << NormalisationFactorPow2) - 1.
+	 */
+	static constexpr unsigned int NormalisationFactorPow2 = 16;
+
+	/*
 	 * Positioning of the AGC statistics gathering in the pipeline:
 	 * Pre-WB correction or post-WB correction.
 	 * Assume this is post-LSC.
