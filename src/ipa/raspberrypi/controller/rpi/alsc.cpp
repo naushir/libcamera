@@ -221,10 +221,17 @@ void Alsc::initialise()
 	luminanceTable_.resize(XY);
 	asyncLambdaR_.resize(XY);
 	asyncLambdaB_.resize(XY);
+	/* The lambdas are initialised in the SwitchMode. */
 	lambdaR_.resize(XY);
 	lambdaB_.resize(XY);
 
-	/* The lambdas are initialised in the SwitchMode. */
+	/* Temporaries for the computations, but sensible to allocate this up-front! */
+	for (auto &c : tmpC_)
+		c.resize(XY);
+	for (auto &m : tmpM_) {
+		for (auto &c : m)
+			c.resize(XY);
+	}
 }
 
 void Alsc::waitForAysncThread()
@@ -295,10 +302,9 @@ void Alsc::switchMode(CameraMode const &cameraMode,
 		 * the lambdas, but the rest of this code then echoes the code in
 		 * doAlsc, without the adaptive algorithm.
 		 */
-		const size_t XY = config_.tableSize.width * config_.tableSize.height;
 		std::fill(lambdaR_.begin(), lambdaR_.end(), 1.0);
 		std::fill(lambdaB_.begin(), lambdaB_.end(), 1.0);
-		std::vector<double> calTableR(XY), calTableB(XY), calTableTmp(XY);
+		std::vector<double> &calTableR = tmpC_[0], &calTableB = tmpC_[1], &calTableTmp = tmpC_[2];
 		getCalTable(ct_, config_.calibrationsCr, calTableTmp);
 		resampleCalTable(calTableTmp, cameraMode_, config_.tableSize, calTableR);
 		getCalTable(ct_, config_.calibrationsCb, calTableTmp);
@@ -752,15 +758,11 @@ static void reaverage(std::vector<double> &data)
 
 static void runMatrixIterations(const std::vector<double> &C,
 				std::vector<double> &lambda,
-				const std::array<std::vector<double>, 4> &W, double omega,
+				const std::array<std::vector<double>, 4> &W,
+				std::array<std::vector<double>, 4> &M, double omega,
 				unsigned int nIter, double threshold, double lambdaBound,
 				const Size &size)
 {
-	std::array<std::vector<double>, 4> M;
-
-	for (auto &m : M)
-		m.resize(C.size());
-
 	constructM(C, W, M, size);
 	double lastMaxDiff = std::numeric_limits<double>::max();
 	for (unsigned int i = 0; i < nIter; i++) {
@@ -815,14 +817,9 @@ void addLuminanceToTables(std::array<std::vector<double>, 3> &results,
 
 void Alsc::doAlsc()
 {
-	size_t XY = config_.tableSize.width * config_.tableSize.height;
-	std::vector<double> cr(XY), cb(XY), calTableR(XY), calTableB(XY), calTableTmp(XY);
-	std::array<std::vector<double>, 4> wr, wb;
-
-	for (auto &w : wr)
-		w.resize(XY);
-	for (auto &w : wb)
-		w.resize(XY);
+	std::vector<double> &cr = tmpC_[0], &cb = tmpC_[1], &calTableR = tmpC_[2],
+			    &calTableB = tmpC_[3], &calTableTmp = tmpC_[4];
+	std::array<std::vector<double>, 4> &wr = tmpM_[0], &wb = tmpM_[1], &M = tmpM_[2];
 
 	/*
 	 * Calculate our R/B ("Cr"/"Cb") colour statistics, and assess which are
@@ -849,9 +846,9 @@ void Alsc::doAlsc()
 	computeW(cr, config_.sigmaCr, wr, config_.tableSize);
 	computeW(cb, config_.sigmaCb, wb, config_.tableSize);
 	/* Run Gauss-Seidel iterations over the resulting matrix, for R and B. */
-	runMatrixIterations(cr, lambdaR_, wr, config_.omega, config_.nIter,
+	runMatrixIterations(cr, lambdaR_, wr, M, config_.omega, config_.nIter,
 			    config_.threshold, config_.lambdaBound, config_.tableSize);
-	runMatrixIterations(cb, lambdaB_, wb, config_.omega, config_.nIter,
+	runMatrixIterations(cb, lambdaB_, wb, M, config_.omega, config_.nIter,
 			    config_.threshold, config_.lambdaBound, config_.tableSize);
 	/*
 	 * Fold the calibrated gains into our final lambda values. (Note that on

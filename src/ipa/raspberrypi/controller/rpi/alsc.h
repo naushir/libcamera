@@ -111,6 +111,10 @@ private:
 	void doAlsc();
 	std::vector<double> lambdaR_;
 	std::vector<double> lambdaB_;
+
+	/* Temporaries for the computations */
+	std::array<std::vector<double>, 5> tmpC_;
+	std::array<std::array<std::vector<double>, 4>, 3> tmpM_;
 };
 
 } /* namespace RPiController */
