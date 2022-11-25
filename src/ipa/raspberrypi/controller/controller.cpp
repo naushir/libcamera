@@ -38,6 +38,7 @@ int Controller::read(char const *filename)
 
 	std::unique_ptr<YamlObject> root = YamlParser::parse(file);
 	double version = (*root)["version"].get<double>(1.0);
+	target_ = (*root)["target"].get<std::string>("vc4");
 
 	if (version < 2.0) {
 		LOG(RPiController, Warning)
