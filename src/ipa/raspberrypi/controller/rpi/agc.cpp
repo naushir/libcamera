@@ -31,17 +31,12 @@ LOG_DEFINE_CATEGORY(RPiAgc)
 int AgcMeteringMode::read(const libcamera::YamlObject &params)
 {
 	const YamlObject &yamlWeights = params["weights"];
-	if (yamlWeights.size() != AgcStatsSize) {
-		LOG(RPiAgc, Error) << "AgcMeteringMode: Incorrect number of weights";
-		return -EINVAL;
-	}
 
-	unsigned int num = 0;
 	for (const auto &p : yamlWeights.asList()) {
 		auto value = p.get<double>();
 		if (!value)
 			return -EINVAL;
-		weights[num++] = *value;
+		weights.push_back(*value);
 	}
 
 	return 0;
@@ -248,6 +243,23 @@ int Agc::read(const libcamera::YamlObject &params)
 	int ret = config_.read(params);
 	if (ret)
 		return ret;
+
+	unsigned int numWeights = 0;
+	if (!getTarget().compare("bcm2835")) {
+		/*
+		* This is the number actually set up by the firmware, not the maximum possible
+		* number (which is 16).
+		*/
+		numWeights = 15;
+	} else
+		return -EINVAL;
+
+	for (auto const &modes : config_.meteringModes) {
+		if (modes.second.weights.size() != numWeights) {
+			LOG(RPiAgc, Error) << "AgcMeteringMode: Incorrect number of weights";
+			return -EINVAL;
+		}
+	}
 
 	/*
 	 * Set the config's defaults (which are the first ones it read) as our
@@ -581,8 +593,9 @@ void Agc::fetchAwbStatus(Metadata *imageMetadata)
 }
 
 static double computeInitialY(StatisticsPtr &stats, AwbStatus const &awb,
-			      double weights[], double gain)
+			      std::vector<double> &weights, double gain)
 {
+	ASSERT(weights.size() == stats->agcRegions.numRegions());
 	/*
 	 * Note how the calculation below means that equal weights give you
 	 * "average" metering (i.e. all pixels equally important).
