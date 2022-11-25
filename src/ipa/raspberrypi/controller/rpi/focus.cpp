@@ -8,7 +8,6 @@
 
 #include <libcamera/base/log.h>
 
-#include "../focus_status.h"
 #include "focus.h"
 
 using namespace RPiController;
@@ -30,15 +29,8 @@ char const *Focus::name() const
 
 void Focus::process(StatisticsPtr &stats, Metadata *imageMetadata)
 {
-	FocusStatus status;
-	for (unsigned int i = 0; i < stats->focusRegions.numRegions(); i++)
-		status.focusMeasures[i] = stats->focusRegions.get(i).val;
-	status.num = stats->focusRegions.numRegions();
-	imageMetadata->set("focus.status", status);
-
-	LOG(RPiFocus, Debug)
-		<< "Focus contrast measure: "
-		<< (status.focusMeasures[5] + status.focusMeasures[6]) / 10;
+	/* Pass the stats directly to the IPA to report out to the application */
+	imageMetadata->set("focus.status", stats->focusRegions);
 }
 
 /* Register algorithm with the system. */

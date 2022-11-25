@@ -49,7 +49,6 @@
 #include "denoise_algorithm.h"
 #include "denoise_status.h"
 #include "dpc_status.h"
-#include "focus_status.h"
 #include "geq_status.h"
 #include "lux_status.h"
 #include "metadata.h"
@@ -626,14 +625,18 @@ void IPARPi::reportMetadata(unsigned int ipaContext)
 					 static_cast<int32_t>(blackLevelStatus->blackLevelG),
 					 static_cast<int32_t>(blackLevelStatus->blackLevelB) });
 
-	FocusStatus *focusStatus = rpiMetadata.getLocked<FocusStatus>("focus.status");
-	if (focusStatus && focusStatus->num == 12) {
+	RPiController::FocusRegions *focusStatus =
+		rpiMetadata.getLocked<RPiController::FocusRegions>("focus.status");
+	if (focusStatus) {
+		libcamera::Size size = focusStatus->size();
 		/*
 		 * We get a 4x3 grid of regions by default. Calculate the average
 		 * FoM over the central two positions to give an overall scene FoM.
 		 * This can change later if it is not deemed suitable.
 		 */
-		int32_t focusFoM = (focusStatus->focusMeasures[5] + focusStatus->focusMeasures[6]) / 2;
+		ASSERT(size == Size(4, 3));
+		int32_t focusFoM = (focusStatus->get({ 1, 1 }).val +
+				    focusStatus->get({ 2, 1 }).val) / 2;
 		libcameraMetadata_.set(controls::FocusFoM, focusFoM);
 	}
 
