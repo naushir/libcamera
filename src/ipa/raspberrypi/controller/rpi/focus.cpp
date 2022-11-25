@@ -31,9 +31,8 @@ char const *Focus::name() const
 void Focus::process(StatisticsPtr &stats, Metadata *imageMetadata)
 {
 	FocusStatus status;
-	for (unsigned int i = 0; i < stats->focusRegions.numRegions(); i++)
-		status.focusMeasures[i] = stats->focusRegions.get(i).val;
-	status.num = stats->focusRegions.numRegions();
+	for (auto &fom : stats->focusRegions)
+		status.focusMeasures.push_back(fom.val);
 	imageMetadata->set("focus.status", status);
 
 	LOG(RPiFocus, Debug)

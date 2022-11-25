@@ -6,7 +6,7 @@
  */
 #pragma once
 
-#include <linux/bcm2835-isp.h>
+#include <vector>
 
 /*
  * The focus algorithm should post the following structure into the image's
@@ -15,6 +15,5 @@
  */
 
 struct FocusStatus {
-	unsigned int num;
-	uint32_t focusMeasures[FOCUS_REGIONS];
+	std::vector<uint32_t> focusMeasures;
 };

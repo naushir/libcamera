@@ -586,12 +586,13 @@ void IPARPi::reportMetadata()
 					 static_cast<int32_t>(blackLevelStatus->blackLevelB) });
 
 	FocusStatus *focusStatus = rpiMetadata_.getLocked<FocusStatus>("focus.status");
-	if (focusStatus && focusStatus->num == 12) {
+	if (focusStatus) {
 		/*
 		 * We get a 4x3 grid of regions by default. Calculate the average
 		 * FoM over the central two positions to give an overall scene FoM.
 		 * This can change later if it is not deemed suitable.
 		 */
+		ASSERT(focusStatus->focusMeasures.size() == 12);
 		int32_t focusFoM = (focusStatus->focusMeasures[5] + focusStatus->focusMeasures[6]) / 2;
 		libcameraMetadata_.set(controls::FocusFoM, focusFoM);
 	}
