@@ -31,6 +31,7 @@
 
 #include "libcamera/internal/mapped_framebuffer.h"
 
+#include "af_algorithm.h"
 #include "agc_algorithm.h"
 #include "agc_status.h"
 #include "alsc_status.h"
@@ -119,7 +120,8 @@ public:
 	IPARPi()
 		: haveLensCtrls_(false), controller_(), frameCount_(0), checkCount_(0),
 		  mistrustCount_(0), lastRunTimestamp_(0), lsTable_(nullptr),
-		  firstStart_(true)
+		  firstStart_(true), afMode_(controls::AfModeManual), afPauseFlag_(false),
+		  afIdleFlag_(true)
 	{
 	}
 
@@ -217,6 +219,11 @@ private:
 
 	/* Maximum gain code for the sensor. */
 	uint32_t maxSensorGainCode_;
+
+	/* AF helper state, to adapt the libcamera controls. */
+	int32_t afMode_;
+	bool afPauseFlag_;
+	bool afIdleFlag_;
 };
 
 int IPARPi::init(const IPASettings &settings, bool lensPresent,
@@ -258,6 +265,9 @@ int IPARPi::init(const IPASettings &settings, bool lensPresent,
 	}
 
 	haveLensCtrls_ = lensPresent;
+	afMode_ = controls::AfModeManual;
+	afPauseFlag_ = false;
+	afIdleFlag_ = true;
 
 	controller_.initialise();
 
@@ -724,11 +734,51 @@ static const std::map<int32_t, RPiController::DenoiseMode> DenoiseModeTable = {
 	{ controls::draft::NoiseReductionModeZSL, RPiController::DenoiseMode::ColourHighQuality },
 };
 
+static const std::map<int32_t, RPiController::AfAlgorithm::AfRange> AfRangeTable = {
+	{ controls::AfRangeNormal, RPiController::AfAlgorithm::AfRangeNormal },
+	{ controls::AfRangeMacro, RPiController::AfAlgorithm::AfRangeMacro },
+	{ controls::AfRangeFull, RPiController::AfAlgorithm::AfRangeFull },
+};
+
 void IPARPi::queueRequest(const ControlList &controls)
 {
 	/* Clear the return metadata buffer. */
 	libcameraMetadata_.clear();
 
+	/*
+	 * Because some AF controls are mode-specific, handle AF mode change first.
+	 * We need some helper state to emulate the libcamera AF state machine.
+	 */
+	if (controls.contains(controls::AF_MODE)) {
+		RPiController::AfAlgorithm *af = dynamic_cast<RPiController::AfAlgorithm *>(
+			controller_.getAlgorithm("af"));
+		if (af) {
+			ControlValue const &v = controls.get(controls::AF_MODE);
+			int32_t m = v.get<int32_t>();
+			if (m != afMode_) {
+				switch (v.get<int32_t>()) {
+				case controls::AfModeAuto:
+					af->enableCAF(false);
+					break;
+				case controls::AfModeContinuous:
+					af->enableCAF(true);
+					break;
+				default:
+					af->enableCAF(false);
+					af->cancelScan();
+				}
+				libcameraMetadata_.set(controls::AF_MODE, v);
+				afMode_ = m;
+				afIdleFlag_ = (m != controls::AfModeContinuous);
+				afPauseFlag_ = false;
+			}
+		} else {
+			LOG(IPARPI, Warning)
+				<< "Could not set AF_MODE - no AF algorithm";
+		}
+	}
+
+	/* Iterate over controls */
 	for (auto const &ctrl : controls) {
 		LOG(IPARPI, Debug) << "Request ctrl: "
 				   << controls::controls.at(ctrl.first)->name()
@@ -1016,6 +1066,123 @@ void IPARPi::queueRequest(const ControlList &controls)
 			} else {
 				LOG(IPARPI, Error) << "Noise reduction mode " << idx
 						   << " not recognised";
+			}
+			break;
+		}
+
+		case controls::AF_MODE:
+			break; /* We already handled this one above */
+
+		case controls::AF_RANGE: {
+			RPiController::AfAlgorithm *af = dynamic_cast<RPiController::AfAlgorithm *>(
+				controller_.getAlgorithm("af"));
+			if (!af) {
+				LOG(IPARPI, Warning)
+					<< "Could not set AF_RANGE - no focus algorithm";
+				break;
+			}
+
+			auto range = AfRangeTable.find(ctrl.second.get<int32_t>());
+			if (range == AfRangeTable.end()) {
+				LOG(IPARPI, Error) << "AF range " << ctrl.second.get<int32_t>()
+						   << " not recognised";
+				af->setRange(range->second);
+			} else {
+			}
+			break;
+		}
+
+		case controls::AF_SPEED: {
+			using RPiController::AfAlgorithm;
+
+			AfAlgorithm *af = dynamic_cast<AfAlgorithm *>(controller_.getAlgorithm("af"));
+			if (!af) {
+				LOG(IPARPI, Warning)
+					<< "Could not set AF_SPEED - no focus algorithm";
+				break;
+			}
+
+			AfAlgorithm::AfSpeed speed = ctrl.second.get<int32_t>() == controls::AfSpeedFast ?
+						      AfAlgorithm::AfSpeedFast : AfAlgorithm::AfSpeedNormal;
+			af->setSpeed(speed);
+			break;
+		}
+
+		case controls::AF_METERING: {
+			RPiController::AfAlgorithm *af = dynamic_cast<RPiController::AfAlgorithm *>(
+				controller_.getAlgorithm("af"));
+			if (!af) {
+				LOG(IPARPI, Warning)
+					<< "Could not set AF_METERING - no focus algorithm";
+				break;
+			}
+			af->setMetering(ctrl.second.get<int32_t>() == controls::AfMeteringWindows);
+			break;
+		}
+
+		case controls::AF_WINDOWS: {
+			RPiController::AfAlgorithm *af = dynamic_cast<RPiController::AfAlgorithm *>(
+				controller_.getAlgorithm("af"));
+			if (!af) {
+				LOG(IPARPI, Warning)
+					<< "Could not set AF_WINDOWS - no focus algorithm";
+				break;
+			}
+			af->setWindows(ctrl.second.get<Span<const Rectangle>>());
+			break;
+		}
+
+		case controls::AF_PAUSE: {
+			RPiController::AfAlgorithm *af = dynamic_cast<RPiController::AfAlgorithm *>(
+				controller_.getAlgorithm("af"));
+			if (af && afMode_ == controls::AfModeContinuous) {
+				if (ctrl.second.get<int32_t>() == controls::AfPauseResume) {
+					af->enableCAF(true);
+					afPauseFlag_ = false;
+				} else {
+					if (ctrl.second.get<int32_t>() == controls::AfPauseImmediate)
+						af->cancelScan();
+					af->enableCAF(false);
+					afPauseFlag_ = true;
+				}
+			} else {
+				LOG(IPARPI, Warning)
+					<< "Could not set AF_PAUSE - no AF algorithm or not Continuous";
+			}
+			break;
+		}
+
+		case controls::AF_TRIGGER: {
+			RPiController::AfAlgorithm *af = dynamic_cast<RPiController::AfAlgorithm *>(
+				controller_.getAlgorithm("af"));
+			if (af && afMode_ == controls::AfModeAuto) {
+				if (ctrl.second.get<int32_t>() == controls::AfTriggerStart) {
+					af->triggerScan();
+					afIdleFlag_ = false;
+				} else {
+					af->cancelScan();
+					afIdleFlag_ = true;
+				}
+			} else {
+				LOG(IPARPI, Warning)
+					<< "Could not set AF_TRIGGER - no AF algorithm or not Auto";
+			}
+			break;
+		}
+
+		case controls::LENS_POSITION: {
+			RPiController::AfAlgorithm *af = dynamic_cast<RPiController::AfAlgorithm *>(
+				controller_.getAlgorithm("af"));
+			if (af && afMode_ == controls::AfModeManual) {
+				int32_t hwpos;
+				if (af->setLensPosition(ctrl.second.get<float>(), &hwpos)) {
+					ControlList lensCtrls;
+					lensCtrls.set(V4L2_CID_FOCUS_ABSOLUTE, hwpos);
+					setLensControls.emit(lensCtrls);
+				}
+			} else {
+				LOG(IPARPI, Warning)
+					<< "Could not set LENS_POSITION - no AF algorithm or not Manual";
 			}
 			break;
 		}
