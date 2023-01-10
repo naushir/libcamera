@@ -1617,6 +1617,8 @@ int RPiCameraData::configureIPA(const CameraConfiguration *config, ipa::RPi::IPA
 
 	ipaConfig.sensorControls = sensor_->controls();
 	ipaConfig.ispControls = isp_[Isp::Input].dev()->controls();
+	if (sensor_->focusLens())
+		ipaConfig.lensControls = sensor_->focusLens()->controls();
 
 	/* Always send the user transform to the IPA. */
 	ipaConfig.transform = static_cast<unsigned int>(config->transform);
