@@ -228,10 +228,8 @@ void Alsc::initialise()
 	/* Temporaries for the computations, but sensible to allocate this up-front! */
 	for (auto &c : tmpC_)
 		c.resize(XY);
-	for (auto &m : tmpM_) {
-		for (auto &c : m)
-			c.resize(XY);
-	}
+	for (auto &m : tmpM_)
+		m.resize(XY);
 }
 
 void Alsc::waitForAysncThread()
@@ -610,24 +608,24 @@ static double computeWeight(double Ci, double Cj, double sigma)
 
 /* Compute all weights. */
 static void computeW(const std::vector<double> &C, double sigma,
-		     std::array<std::vector<double>, 4> &W, const Size &size)
+		     std::vector<std::array<double, 4>> &W, const Size &size)
 {
 	size_t XY = size.width * size.height;
 	size_t X = size.width;
 
 	for (unsigned int i = 0; i < XY; i++) {
 		/* Start with neighbour above and go clockwise. */
-		W[0][i] = i >= X ? computeWeight(C[i], C[i - X], sigma) : 0;
-		W[1][i] = i % X < X - 1 ? computeWeight(C[i], C[i + 1], sigma) : 0;
-		W[2][i] = i < XY - X ? computeWeight(C[i], C[i + X], sigma) : 0;
-		W[3][i] = i % X ? computeWeight(C[i], C[i - 1], sigma) : 0;
+		W[i][0] = i >= X ? computeWeight(C[i], C[i - X], sigma) : 0;
+		W[i][1] = i % X < X - 1 ? computeWeight(C[i], C[i + 1], sigma) : 0;
+		W[i][2] = i < XY - X ? computeWeight(C[i], C[i + X], sigma) : 0;
+		W[i][3] = i % X ? computeWeight(C[i], C[i - 1], sigma) : 0;
 	}
 }
 
 /* Compute M, the large but sparse matrix such that M * lambdas = 0. */
 static void constructM(const std::vector<double> &C,
-		       const std::array<std::vector<double>, 4> &W,
-		       std::array<std::vector<double>, 4> &M,
+		       const std::vector<std::array<double, 4>> &W,
+		       std::vector<std::array<double, 4>> &M,
 		       const Size &size)
 {
 	size_t XY = size.width * size.height;
@@ -642,11 +640,11 @@ static void constructM(const std::vector<double> &C,
 		int m = !!(i >= X) + !!(i % X < X - 1) + !!(i < XY - X) +
 			!!(i % X); /* total number of neighbours */
 		/* we'll divide the diagonal out straight away */
-		double diagonal = (epsilon + W[0][i] + W[1][i] + W[2][i] + W[3][i]) * C[i];
-		M[0][i] = i >= X ? (W[0][i] * C[i - X] + epsilon / m * C[i]) / diagonal : 0;
-		M[1][i] = i % X < X - 1 ? (W[1][i] * C[i + 1] + epsilon / m * C[i]) / diagonal : 0;
-		M[2][i] = i < XY - X ? (W[2][i] * C[i + X] + epsilon / m * C[i]) / diagonal : 0;
-		M[3][i] = i % X ? (W[3][i] * C[i - 1] + epsilon / m * C[i]) / diagonal : 0;
+		double diagonal = (epsilon + W[i][0] + W[i][1] + W[i][2] + W[i][3]) * C[i];
+		M[i][0] = i >= X ? (W[i][0] * C[i - X] + epsilon / m * C[i]) / diagonal : 0;
+		M[i][1] = i % X < X - 1 ? (W[i][1] * C[i + 1] + epsilon / m * C[i]) / diagonal : 0;
+		M[i][2] = i < XY - X ? (W[i][2] * C[i + X] + epsilon / m * C[i]) / diagonal : 0;
+		M[i][3] = i % X ? (W[i][3] * C[i - 1] + epsilon / m * C[i]) / diagonal : 0;
 	}
 }
 
@@ -655,37 +653,37 @@ static void constructM(const std::vector<double> &C,
  * left/right neighbours are zero down the left/right edges, so we don't need
  * need to test the i value to exclude them.
  */
-static double computeLambdaBottom(int i, const std::array<std::vector<double>, 4> &M,
+static double computeLambdaBottom(int i, const std::vector<std::array<double, 4>> &M,
 				  std::vector<double> &lambda, const Size &size)
 {
-	return M[1][i] * lambda[i + 1] + M[2][i] * lambda[i + size.width] +
-	       M[3][i] * lambda[i - 1];
+	return M[i][1] * lambda[i + 1] + M[i][2] * lambda[i + size.width] +
+	       M[i][3] * lambda[i - 1];
 }
-static double computeLambdaBottomStart(int i, const std::array<std::vector<double>, 4> &M,
+static double computeLambdaBottomStart(int i, const std::vector<std::array<double, 4>> &M,
 				       std::vector<double> &lambda, const Size &size)
 {
-	return M[1][i] * lambda[i + 1] + M[2][i] * lambda[i + size.width];
+	return M[i][1] * lambda[i + 1] + M[i][2] * lambda[i + size.width];
 }
-static double computeLambdaInterior(int i, const std::array<std::vector<double>, 4> &M,
+static double computeLambdaInterior(int i, const std::vector<std::array<double, 4>> &M,
 				    std::vector<double> &lambda, const Size &size)
 {
-	return M[0][i] * lambda[i - size.width] + M[1][i] * lambda[i + 1] +
-	       M[2][i] * lambda[i + size.width] + M[3][i] * lambda[i - 1];
+	return M[i][0] * lambda[i - size.width] + M[i][1] * lambda[i + 1] +
+	       M[i][2] * lambda[i + size.width] + M[i][3] * lambda[i - 1];
 }
-static double computeLambdaTop(int i, const std::array<std::vector<double>, 4> &M,
+static double computeLambdaTop(int i, const std::vector<std::array<double, 4>> &M,
 			       std::vector<double> &lambda, const Size &size)
 {
-	return M[0][i] * lambda[i - size.width] + M[1][i] * lambda[i + 1] +
-	       M[3][i] * lambda[i - 1];
+	return M[i][0] * lambda[i - size.width] + M[i][1] * lambda[i + 1] +
+	       M[i][3] * lambda[i - 1];
 }
-static double computeLambdaTopEnd(int i, const std::array<std::vector<double>, 4> &M,
+static double computeLambdaTopEnd(int i, const std::vector<std::array<double, 4>> &M,
 				  std::vector<double> &lambda, const Size &size)
 {
-	return M[0][i] * lambda[i - size.width] + M[3][i] * lambda[i - 1];
+	return M[i][0] * lambda[i - size.width] + M[i][3] * lambda[i - 1];
 }
 
 /* Gauss-Seidel iteration with over-relaxation. */
-static double gaussSeidel2Sor(const std::array<std::vector<double>, 4> &M, double omega,
+static double gaussSeidel2Sor(const std::vector<std::array<double, 4>> &M, double omega,
 			      std::vector<double> &lambda, double lambdaBound,
 			      const Size &size)
 {
@@ -758,8 +756,8 @@ static void reaverage(std::vector<double> &data)
 
 static void runMatrixIterations(const std::vector<double> &C,
 				std::vector<double> &lambda,
-				const std::array<std::vector<double>, 4> &W,
-				std::array<std::vector<double>, 4> &M, double omega,
+				const std::vector<std::array<double, 4>> &W,
+				std::vector<std::array<double, 4>> &M, double omega,
 				unsigned int nIter, double threshold, double lambdaBound,
 				const Size &size)
 {
@@ -819,7 +817,7 @@ void Alsc::doAlsc()
 {
 	std::vector<double> &cr = tmpC_[0], &cb = tmpC_[1], &calTableR = tmpC_[2],
 			    &calTableB = tmpC_[3], &calTableTmp = tmpC_[4];
-	std::array<std::vector<double>, 4> &wr = tmpM_[0], &wb = tmpM_[1], &M = tmpM_[2];
+	std::vector<std::array<double, 4>> &wr = tmpM_[0], &wb = tmpM_[1], &M = tmpM_[2];
 
 	/*
 	 * Calculate our R/B ("Cr"/"Cb") colour statistics, and assess which are
