@@ -103,7 +103,8 @@ private:
 	void filterExposure(bool desaturate);
 	void divideUpExposure();
 	void writeAndFinish(Metadata *imageMetadata, bool desaturate);
-	libcamera::utils::Duration clipShutter(libcamera::utils::Duration shutter);
+	libcamera::utils::Duration limitShutter(libcamera::utils::Duration shutter);
+	double limitGain(double gain) const;
 	AgcMeteringMode *meteringMode_;
 	AgcExposureMode *exposureMode_;
 	AgcConstraintMode *constraintMode_;
