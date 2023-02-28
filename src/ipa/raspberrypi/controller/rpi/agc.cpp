@@ -225,7 +225,7 @@ Agc::Agc(Controller *controller)
 	  frameCount_(0), lockCount_(0),
 	  lastTargetExposure_(0s), lastSensitivity_(0.0),
 	  ev_(1.0), flickerPeriod_(0s),
-	  maxShutter_(0s), fixedShutter_(0s), fixedAnalogueGain_(0.0)
+	  fixedShutter_(0s), fixedAnalogueGain_(0.0)
 {
 	memset(&awb_, 0, sizeof(awb_));
 	/*
@@ -300,9 +300,9 @@ void Agc::setFlickerPeriod(Duration flickerPeriod)
 	flickerPeriod_ = flickerPeriod;
 }
 
-void Agc::setMaxShutter(Duration maxShutter)
+void Agc::setSensorLimits(const SensorLimits &limits)
 {
-	maxShutter_ = maxShutter;
+	sensorLimits_ = limits;
 }
 
 void Agc::setFixedShutter(Duration fixedShutter)
@@ -874,8 +874,8 @@ void Agc::writeAndFinish(Metadata *imageMetadata, bool desaturate)
 
 Duration Agc::clipShutter(Duration shutter)
 {
-	if (maxShutter_)
-		shutter = std::min(shutter, maxShutter_);
+	if (sensorLimits_.maxShutter)
+		shutter = std::min(shutter, sensorLimits_.maxShutter);
 	return shutter;
 }
 

@@ -1505,12 +1505,13 @@ void IPARPi::applyFrameDurations(Duration minFrameDuration, Duration maxFrameDur
 	 * getBlanking() will update maxShutter with the largest exposure
 	 * value possible.
 	 */
-	Duration maxShutter = Duration::max();
-	helper_->getBlanking(maxShutter, minFrameDuration_, maxFrameDuration_);
+	RPiController::AgcAlgorithm::SensorLimits limits;
+	limits.maxShutter = Duration::max();
+	helper_->getBlanking(limits.maxShutter, minFrameDuration_, maxFrameDuration_);
 
 	RPiController::AgcAlgorithm *agc = dynamic_cast<RPiController::AgcAlgorithm *>(
 		controller_.getAlgorithm("agc"));
-	agc->setMaxShutter(maxShutter);
+	agc->setSensorLimits(limits);
 }
 
 void IPARPi::applyAGC(const struct AgcStatus *agcStatus, ControlList &ctrls)

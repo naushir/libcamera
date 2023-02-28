@@ -15,13 +15,22 @@ namespace RPiController {
 class AgcAlgorithm : public Algorithm
 {
 public:
+	struct SensorLimits {
+		libcamera::utils::Duration minShutter;
+		libcamera::utils::Duration maxShutter;
+		libcamera::utils::Duration minFrameDuration;
+		libcamera::utils::Duration maxFrameDuration;
+		double minAnalogueGain;
+		double maxAnalogueGain;
+	};
+
 	AgcAlgorithm(Controller *controller) : Algorithm(controller) {}
 	/* An AGC algorithm must provide the following: */
 	virtual unsigned int getConvergenceFrames() const = 0;
 	virtual void setEv(double ev) = 0;
 	virtual void setFlickerPeriod(libcamera::utils::Duration flickerPeriod) = 0;
 	virtual void setFixedShutter(libcamera::utils::Duration fixedShutter) = 0;
-	virtual void setMaxShutter(libcamera::utils::Duration maxShutter) = 0;
+	virtual void setSensorLimits(const SensorLimits &limits) = 0;
 	virtual void setFixedAnalogueGain(double fixedAnalogueGain) = 0;
 	virtual void setMeteringMode(std::string const &meteringModeName) = 0;
 	virtual void setExposureMode(std::string const &exposureModeName) = 0;

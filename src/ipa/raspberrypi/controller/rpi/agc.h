@@ -78,7 +78,7 @@ public:
 	unsigned int getConvergenceFrames() const override;
 	void setEv(double ev) override;
 	void setFlickerPeriod(libcamera::utils::Duration flickerPeriod) override;
-	void setMaxShutter(libcamera::utils::Duration maxShutter) override;
+	void setSensorLimits(const SensorLimits &limits) override;
 	void setFixedShutter(libcamera::utils::Duration fixedShutter) override;
 	void setFixedAnalogueGain(double fixedAnalogueGain) override;
 	void setMeteringMode(std::string const &meteringModeName) override;
@@ -131,7 +131,7 @@ private:
 	std::string constraintModeName_;
 	double ev_;
 	libcamera::utils::Duration flickerPeriod_;
-	libcamera::utils::Duration maxShutter_;
+	SensorLimits sensorLimits_;
 	libcamera::utils::Duration fixedShutter_;
 	double fixedAnalogueGain_;
 };
