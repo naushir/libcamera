@@ -60,6 +60,8 @@ const ControlInfoMap::Map ipaControls{
 	{ &controls::AeMeteringMode, ControlInfo(controls::AeMeteringModeValues) },
 	{ &controls::AeConstraintMode, ControlInfo(controls::AeConstraintModeValues) },
 	{ &controls::AeExposureMode, ControlInfo(controls::AeExposureModeValues) },
+	{ &controls::AeFlickerMode, ControlInfo(controls::AeFlickerModeValues) },
+	{ &controls::AeFlickerCustom, ControlInfo(100, 1000000) },
 	{ &controls::ExposureValue, ControlInfo(-8.0f, 8.0f, 0.0f) },
 	{ &controls::Brightness, ControlInfo(-1.0f, 1.0f, 0.0f) },
 	{ &controls::Contrast, ControlInfo(0.0f, 32.0f, 1.0f) },
@@ -809,6 +811,78 @@ void IpaBase::applyControls(const ControlList &controls)
 			agc->setEv(ev);
 			libcameraMetadata_.set(controls::ExposureValue,
 					       ctrl.second.get<float>());
+			break;
+		}
+
+		case controls::AE_FLICKER_MODE: {
+			RPiController::AgcAlgorithm *agc = dynamic_cast<RPiController::AgcAlgorithm *>(
+				controller_.getAlgorithm("agc"));
+			if (!agc) {
+				LOG(IPARPI, Warning)
+					<< "Could not set AeFlickerMode - no AGC algorithm";
+				break;
+			}
+
+			int32_t mode = ctrl.second.get<int32_t>();
+			bool modeValid = true;
+
+			switch (mode) {
+			case controls::FlickerOff: {
+				agc->setFlickerPeriod(0us);
+
+				break;
+			}
+
+			case controls::FlickerFreq50Hz: {
+				agc->setFlickerPeriod(10000 * 1.0us);
+
+				break;
+			}
+
+			case controls::FlickerFreq60Hz: {
+				agc->setFlickerPeriod(8333.333 * 1.0us);
+
+				break;
+			}
+
+			case controls::FlickerCustom: {
+				agc->setFlickerPeriod(flickerState_.customPeriod);
+
+				break;
+			}
+
+			default:
+				LOG(IPARPI, Error) << "Flicker mode " << mode << " is not supported";
+				modeValid = false;
+
+				break;
+			}
+
+			if (modeValid)
+				flickerState_.mode = mode;
+
+			break;
+		}
+
+		case controls::AE_FLICKER_CUSTOM: {
+			RPiController::AgcAlgorithm *agc = dynamic_cast<RPiController::AgcAlgorithm *>(
+				controller_.getAlgorithm("agc"));
+			if (!agc) {
+				LOG(IPARPI, Warning)
+					<< "Could not set AeFlickerCustom - no AGC algorithm";
+				break;
+			}
+
+			uint32_t customPeriod = ctrl.second.get<int32_t>();
+			flickerState_.customPeriod = customPeriod * 1.0us;
+
+			/*
+			 * We note that it makes no difference if the mode gets set to "custom"
+			 * first, and the period updated after, or vice versa.
+			 */
+			if (flickerState_.mode == controls::FlickerCustom)
+				agc->setFlickerPeriod(flickerState_.customPeriod);
+
 			break;
 		}
 
