@@ -156,6 +156,73 @@ controls:
         control of which features should be automatically adjusted shouldn't
         better be handled through a separate AE mode control.
 
+  - AeFlickerMode:
+      type: int32_t
+      description: |
+        Set the flicker mode, which determines whether, and how, the AGC/AEC
+        algorithm attempts to hide flicker effects caused by the duty cycle of
+        artificial lighting.
+
+        Although implementation dependent, many algorithms for "flicker
+        avoidance" work by restricting this exposure time to integer multiples
+        of the cycle period, wherever possible.
+
+        Implementations may not support all of the flicker modes listed below.
+
+      enum:
+        - name: FlickerOff
+          value: 0
+          description: No flicker avoidance is performed.
+        - name: FlickerFreq50Hz
+          value: 1
+          description: 50Hz flicker avoidance.
+            Suppress flicker effects caused by lighting running with a 100Hz
+            period (such as that produced by 50Hz mains electricity).
+        - name: FlickerFreq60Hz
+          value: 2
+          description: 60Hz flicker avoidance.
+            Suppress flicker effects caused by lighting running with a 120Hz
+            period (such as that produced by 60Hz mains electricity).
+        - name: FlickerCustom
+          value: 3
+          description: Custom flicker avoidance.
+            Suppress flicker effects caused by lighting running with a period
+            specified by the AeFlickerCustom control.
+            \sa AeFlickerCustom
+        - name: FlickerAuto
+          value: 4
+          description: Automatic flicker period detection and avoidance.
+            The system will automatically determine the most likely value of
+            flicker period, and avoid flicker of this frequency.
+
+  - AeFlickerCustom:
+      type: int32_t
+      description: Custom flicker period in microseconds.
+        This value sets the current flicker period to avoid. It is used when
+        AeFlickerMode is set to FlickerCustom.
+
+        If this control is not available, then the setting of custom flicker
+        periods is not supported.
+
+        \sa AeFlickerMode
+
+  - AeFlickerDetected:
+      type: int32_t
+      description: Flicker period detected in microseconds.
+        The value reported here indicates the currently detected flicker
+        period, or zero if no flicker at all is detected.
+
+        So in the case of 50Hz mains flicker, the value would be 10000
+        (corresponding to 100Hz), or 8333 (120Hz) for 60Hz mains flicker. But
+        note that it is not required that any form of scene flicker is detected
+        at all, so depending on the implementation, this metadata may just
+        report zero or be entirely absent.
+
+        AeFlickerDetected may also report other values for non-standard flicker
+        periods.
+
+        \sa AeFlickerMode
+
   - Brightness:
       type: float
       description: |
@@ -849,23 +916,6 @@ controls:
         - name: LensShadingMapModeOn
           value: 1
           description: The lens shading map mode is available.
-
-  - SceneFlicker:
-      type: int32_t
-      draft: true
-      description: |
-       Control to report the detected scene light frequency. Currently
-       identical to ANDROID_STATISTICS_SCENE_FLICKER.
-      enum:
-        - name: SceneFickerOff
-          value: 0
-          description: No flickering detected.
-        - name: SceneFicker50Hz
-          value: 1
-          description: 50Hz flickering detected.
-        - name: SceneFicker60Hz
-          value: 2
-          description: 60Hz flickering detected.
 
   - PipelineDepth:
       type: int32_t
