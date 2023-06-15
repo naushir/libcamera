@@ -398,7 +398,7 @@ void IpaBase::prepareIsp(const PrepareParams &params)
 	 * metadata.
 	 */
 	AgcStatus agcStatus;
-	RPiController::Metadata &delayedMetadata = rpiMetadata_[params.delayContext];
+	RPiController::Metadata &delayedMetadata = rpiMetadata_[params.delayContext % rpiMetadata_.size()];
 	if (!delayedMetadata.get<AgcStatus>("agc.status", agcStatus))
 		rpiMetadata.set("agc.delayed_status", agcStatus);
 
@@ -475,7 +475,7 @@ void IpaBase::processStats(const ProcessParams &params)
 		if (rpiMetadata.get("agc.status", agcStatus) == 0) {
 			ControlList ctrls(sensorCtrls_);
 			applyAGC(&agcStatus, ctrls);
-			setDelayedControls.emit(ctrls, ipaContext);
+			setDelayedControls.emit(ctrls, params.ipaContext);
 			setCameraTimeoutValue();
 		}
 	}
