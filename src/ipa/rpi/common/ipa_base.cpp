@@ -402,6 +402,8 @@ void IpaBase::prepareIsp(const PrepareParams &params)
 	if (!delayedMetadata.get<AgcStatus>("agc.status", agcStatus))
 		rpiMetadata.set("agc.delayed_status", agcStatus);
 
+	LOG(IPARPI, Info) << "IPA prepare context " << params.ipaContext << " delayed context " << params.delayContext;
+
 	/*
 	 * This may overwrite the DeviceStatus using values from the sensor
 	 * metadata, and may also do additional custom processing.
@@ -473,6 +475,9 @@ void IpaBase::processStats(const ProcessParams &params)
 
 		AgcStatus agcStatus;
 		if (rpiMetadata.get("agc.status", agcStatus) == 0) {
+
+			LOG(IPARPI, Info) << "IPA process stats context " << params.ipaContext;
+
 			ControlList ctrls(sensorCtrls_);
 			applyAGC(&agcStatus, ctrls);
 			setDelayedControls.emit(ctrls, params.ipaContext);
@@ -722,7 +727,7 @@ void IpaBase::applyControls(const ControlList &controls)
 			/* The control provides units of microseconds. */
 			agc->setFixedShutter(ctrl.second.get<int32_t>() * 1.0us);
 
-			libcameraMetadata_.set(controls::ExposureTime, ctrl.second.get<int32_t>());
+			//libcameraMetadata_.set(controls::ExposureTime, ctrl.second.get<int32_t>());
 			break;
 		}
 
@@ -737,8 +742,8 @@ void IpaBase::applyControls(const ControlList &controls)
 
 			agc->setFixedAnalogueGain(ctrl.second.get<float>());
 
-			libcameraMetadata_.set(controls::AnalogueGain,
-					       ctrl.second.get<float>());
+			//libcameraMetadata_.set(controls::AnalogueGain,
+			//		       ctrl.second.get<float>());
 			break;
 		}
 
@@ -1205,7 +1210,7 @@ void IpaBase::fillDeviceStatus(const ControlList &sensorControls, unsigned int i
 	if (af)
 		deviceStatus.lensPosition = af->getLensPosition();
 
-	LOG(IPARPI, Debug) << "Metadata - " << deviceStatus;
+	LOG(IPARPI, Info) << "Metadata - " << deviceStatus;
 
 	rpiMetadata_[ipaContext].set("device.status", deviceStatus);
 }
@@ -1375,7 +1380,7 @@ void IpaBase::applyAGC(const struct AgcStatus *agcStatus, ControlList &ctrls)
 	int32_t exposureLines = helper_->exposureLines(exposure,
 						       helper_->hblankToLineLength(hblank));
 
-	LOG(IPARPI, Debug) << "Applying AGC Exposure: " << exposure
+	LOG(IPARPI, Info) << "Applying AGC Exposure: " << exposure
 			   << " (Shutter lines: " << exposureLines << ", AGC requested "
 			   << agcStatus->shutterTime << ") Gain: "
 			   << agcStatus->analogueGain << " (Gain Code: "
