@@ -47,7 +47,7 @@ class CameraData : public Camera::Private
 {
 public:
 	CameraData(PipelineHandler *pipe)
-		: Camera::Private(pipe), state_(State::Stopped), currentRequest_(nullptr),
+		: Camera::Private(pipe), state_(State::Stopped),
 		  flipsAlterBayerOrder_(false), dropFrameCount_(0), buffersAllocated_(false),
 		  ispOutputCount_(0), ispOutputTotal_(0)
 	{
@@ -148,8 +148,6 @@ public:
 	}
 
 	std::deque<Request *> requestQueue_;
-	Request *currentRequest_;
-	uint64_t previousControlListId_;
 
 	/* Store the "native" Bayer order (that is, with no transforms applied). */
 	bool flipsAlterBayerOrder_;
