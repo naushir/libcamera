@@ -952,7 +952,7 @@ void Vc4CameraData::tryRunPipeline()
 		if (behaviour == 1)
 			jumpQueueBehaviour2(requestQueue_);
 		else if (behaviour == 2)
-			androidQueueBehaviour2(requestQueue_, maxDelay_ + 2);
+			androidQueueBehaviour2(requestQueue_, maxDelay_ + 1);
 	}
 
 	/*
