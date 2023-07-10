@@ -337,8 +337,7 @@ void IpaBase::start(const ControlList &controls, StartResult *result)
 		 * dropFrameCount_ ensures we don't skip initial IPA runs if the
 		 * sensor is running at a faster rate than the IPA.
 		 */
-		dropFrameCount_ = std::max<unsigned int>({ result->dropFrameCount,
-							   agcConvergenceFrames,
+		dropFrameCount_ = std::max<unsigned int>({ agcConvergenceFrames,
 							   awbConvergenceFrames });
 		LOG(IPARPI, Debug) << "Drop " << dropFrameCount_ << " frames on startup";
 	} else {

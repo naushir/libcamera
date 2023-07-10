@@ -698,6 +698,24 @@ int PipelineHandlerBase::queueRequestDevice(Camera *camera, Request *request)
 			stream->setExportedBuffer(buffer);
 		}
 
+		if (stream->getFlags() & StreamFlag::DropFrames) {
+			/*
+			 * For external streams that drop frames, we must queue
+			 * up a set of buffers to handle the number of drop
+			 * frames requested by the IPA. This is done by queueing
+			 * either a request buffer or internal buffer (buffer ==
+			 * nullptr) multiple times to cover the number of
+			 * dropped frames.
+			 */
+			for (unsigned int i = 0; i < data->dropFrameCount_; i++) {
+				int ret = stream->queueBuffer(buffer);
+				if (ret)
+					return ret;
+			}
+
+			stream->clearFlags(StreamFlag::DropFrames);
+		}
+
 		/*
 		 * If no buffer is provided by the request for this stream, we
 		 * queue a nullptr to the stream to signify that it must use an
@@ -872,23 +890,6 @@ int PipelineHandlerBase::queueAllBuffers(Camera *camera)
 			ret = stream->queueAllBuffers();
 			if (ret < 0)
 				return ret;
-		} else {
-			/*
-			 * For external streams, we must queue up a set of internal
-			 * buffers to handle the number of drop frames requested by
-			 * the IPA. This is done by passing nullptr in queueBuffer().
-			 *
-			 * The below queueBuffer() call will do nothing if there
-			 * are not enough internal buffers allocated, but this will
-			 * be handled by queuing the request for buffers in the
-			 * RPiStream object.
-			 */
-			unsigned int i;
-			for (i = 0; i < data->dropFrameCount_; i++) {
-				ret = stream->queueBuffer(nullptr);
-				if (ret)
-					return ret;
-			}
 		}
 	}
 
@@ -1375,13 +1376,17 @@ void CameraData::clearIncompleteRequests()
 
 void CameraData::handleStreamBuffer(FrameBuffer *buffer, RPi::Stream *stream)
 {
+	/* Do nothing if we are dropping invalid sensor frames. */
+	if (dropFrameCount_)
+		return;
+
 	/*
 	 * It is possible to be here without a pending request, so check
 	 * that we actually have one to action, otherwise we just return
 	 * buffer back to the stream.
 	 */
 	Request *request = requestQueue_.empty() ? nullptr : requestQueue_.front();
-	if (!dropFrameCount_ && request && request->findBuffer(stream) == buffer) {
+	if (request && request->findBuffer(stream) == buffer) {
 		/*
 		 * Tag the buffer as completed, returning it to the
 		 * application.
@@ -1423,39 +1428,17 @@ void CameraData::handleState()
 
 void CameraData::checkRequestCompleted()
 {
-	bool requestCompleted = false;
-	/*
-	 * If we are dropping this frame, do not touch the request, simply
-	 * change the state to IDLE when ready.
-	 */
-	if (!dropFrameCount_) {
-		Request *request = requestQueue_.front();
-		if (request->hasPendingBuffers())
-			return;
+	Request *request = requestQueue_.front();
+	if (request->hasPendingBuffers())
+		return;
 
-		/* Must wait for metadata to be filled in before completing. */
-		if (state_ != State::IpaComplete)
-			return;
+	/* Must wait for metadata to be filled in before completing. */
+	if (state_ != State::IpaComplete)
+		return;
 
-		pipe()->completeRequest(request);
-		requestQueue_.pop();
-		requestCompleted = true;
-	}
-
-	/*
-	 * Make sure we have three outputs completed in the case of a dropped
-	 * frame.
-	 */
-	if (state_ == State::IpaComplete &&
-	    ((ispOutputCount_ == ispOutputTotal_ && dropFrameCount_) ||
-	     requestCompleted)) {
-		state_ = State::Idle;
-		if (dropFrameCount_) {
-			dropFrameCount_--;
-			LOG(RPI, Debug) << "Dropping frame at the request of the IPA ("
-					<< dropFrameCount_ << " left)";
-		}
-	}
+	pipe()->completeRequest(request);
+	requestQueue_.pop();
+	state_ = State::Idle;
 }
 
 void CameraData::fillRequestMetadata(const ControlList &bufferControls, Request *request)

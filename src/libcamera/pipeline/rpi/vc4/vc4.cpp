@@ -309,7 +309,7 @@ int PipelineHandlerVc4::platformRegister(std::unique_ptr<RPi::CameraData> &camer
 		return -ENOENT;
 
 	/* Locate and open the unicam video streams. */
-	data->unicam_[Unicam::Image] = RPi::Stream("Unicam Image", unicamImage);
+	data->unicam_[Unicam::Image] = RPi::Stream("Unicam Image", unicamImage, StreamFlag::DropFrames);
 
 	/* An embedded data node will not be present if the sensor does not support it. */
 	MediaEntity *unicamEmbedded = unicam->getEntityByName("unicam-embedded");
@@ -879,6 +879,13 @@ void Vc4CameraData::tryRunPipeline()
 
 	if (!findMatchingBuffers(bayerFrame, embeddedBuffer))
 		return;
+
+	if (dropFrameCount_) {
+		dropFrameCount_--;
+		LOG(RPI, Debug) << "Dropping invalid sensor frame ("
+				<< dropFrameCount_ << " left)";
+		return;
+	}
 
 	/* Take the first request from the queue and action the IPA. */
 	Request *request = requestQueue_.front();
