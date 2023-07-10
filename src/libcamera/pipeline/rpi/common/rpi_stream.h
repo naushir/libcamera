@@ -49,6 +49,11 @@ public:
 		 * buffers might be provided by (and returned to) the application.
 		 */
 		External	= (1 << 1),
+		/*
+		 * Indicates that startup/configure drop frame handling for this
+		 * stream is needed.
+		 */
+		DropFrames	= (1 << 2),
 	};
 
 	using StreamFlags = Flags<StreamFlag>;
