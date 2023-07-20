@@ -110,19 +110,7 @@ int Stream::prepareBuffers(unsigned int count)
 		count = bufferMap_.size();
 	}
 
-	/*
-	 * If this is an external stream, we must allocate slots for buffers that
-	 * might be externally allocated. We have no indication of how many buffers
-	 * may be used, so this might overallocate slots in the buffer cache.
-	 * Similarly, if this stream is only importing buffers, we do the same.
-	 *
-	 * \todo Find a better heuristic, or, even better, an exact solution to
-	 * this issue.
-	 */
-	if ((flags_ & StreamFlag::External) || (flags_ & StreamFlag::ImportOnly))
-		count = count * 2;
-
-	return dev_->importBuffers(count);
+	return dev_->importBuffers(32);
 }
 
 int Stream::queueBuffer(FrameBuffer *buffer)
