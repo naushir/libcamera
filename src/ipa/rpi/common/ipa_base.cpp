@@ -302,7 +302,7 @@ void IpaBase::start(const ControlList &controls, StartResult *result)
 	 */
 	frameCount_ = 0;
 	if (firstStart_) {
-		dropFrameCount_ = helper_->hideFramesStartup();
+		result->dropFrameCount = helper_->hideFramesStartup();
 		mistrustCount_ = helper_->mistrustFramesStartup();
 
 		/*
@@ -330,14 +330,22 @@ void IpaBase::start(const ControlList &controls, StartResult *result)
 				awbConvergenceFrames += mistrustCount_;
 		}
 
-		dropFrameCount_ = std::max({ dropFrameCount_, agcConvergenceFrames, awbConvergenceFrames });
+		result->startupFrameCount = std::max<unsigned int>({ agcConvergenceFrames,
+								     awbConvergenceFrames });
+
+		/*
+		 * dropFrameCount_ ensures we don't skip initial IPA runs if the
+		 * sensor is running at a faster rate than the IPA.
+		 */
+		dropFrameCount_ = std::max<unsigned int>({ result->dropFrameCount,
+							   agcConvergenceFrames,
+							   awbConvergenceFrames });
 		LOG(IPARPI, Debug) << "Drop " << dropFrameCount_ << " frames on startup";
 	} else {
-		dropFrameCount_ = helper_->hideFramesModeSwitch();
+		result->dropFrameCount = helper_->hideFramesModeSwitch();
 		mistrustCount_ = helper_->mistrustFramesModeSwitch();
+		result->startupFrameCount = 0;
 	}
-
-	result->dropFrameCount = dropFrameCount_;
 
 	firstStart_ = false;
 	lastRunTimestamp_ = 0;
