@@ -774,6 +774,26 @@ controls:
             Continuous AF is paused. No further state changes or lens movements
             will occur until the AfPauseResume control is sent.
 
+  - IqUnstable:
+      type: bool
+      description: |
+        The value true indicates that the camera algorithms have not settled
+        sufficiently to generate images of reliable quality. The application
+        receiving this frame is advised to drop it and wait for a frame where
+        this metadata reports false (or is absent).
+
+        One example of this would be when the camera system starts. It may be
+        trying to adapt very quickly to the ambient conditions, resulting in a
+        few frames where the image brightness may be subject to unusually
+        extreme oscillations.
+
+        The control may report true at other times, for example when an HDR mode
+        is enabled. Here too there may be a few frames of unpredictable exposure
+        until the algorithms have settled.
+
+        The value false (or absence of the control) indicates that this is a
+        normal frame.
+
   # ----------------------------------------------------------------------------
   # Draft controls section
 
