@@ -602,6 +602,8 @@ int PipelineHandlerBase::start(Camera *camera, const ControlList *controls)
 	data->dropFrameCount_ = data->config_.disableStartupFrameDrops
 			      ? 0 : result.dropFrameCount;
 
+	data->startupFrameCount_ = result.startupFrameCount;
+
 	for (auto const stream : data->streams_)
 		stream->resetBuffers();
 
@@ -1447,6 +1449,11 @@ void CameraData::fillRequestMetadata(const ControlList &bufferControls, Request 
 				bufferControls.get(controls::SensorTimestamp).value_or(0));
 
 	request->metadata().set(controls::ScalerCrop, scalerCrop_);
+
+	if (startupFrameCount_) {
+		request->metadata().set(controls::IqUnstable, true);
+		startupFrameCount_--;
+	}
 }
 
 } /* namespace libcamera */

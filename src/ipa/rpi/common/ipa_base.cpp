@@ -332,14 +332,11 @@ void IpaBase::start(const ControlList &controls, StartResult *result)
 
 		result->startupFrameCount = std::max<unsigned int>({ agcConvergenceFrames,
 								     awbConvergenceFrames });
-
 		/*
-		 * dropFrameCount_ ensures we don't skip initial IPA runs if the
+		 * startupFrameCount_ ensures we don't skip initial IPA runs if the
 		 * sensor is running at a faster rate than the IPA.
 		 */
-		dropFrameCount_ = std::max<unsigned int>({ agcConvergenceFrames,
-							   awbConvergenceFrames });
-		LOG(IPARPI, Debug) << "Drop " << dropFrameCount_ << " frames on startup";
+		startupFrameCount_ = result->startupFrameCount;
 	} else {
 		result->dropFrameCount = helper_->hideFramesModeSwitch();
 		mistrustCount_ = helper_->mistrustFramesModeSwitch();
@@ -416,7 +413,7 @@ void IpaBase::prepareIsp(const PrepareParams &params)
 
 	/* Allow a 10% margin on the comparison below. */
 	Duration delta = (frameTimestamp - lastRunTimestamp_) * 1.0ns;
-	if (lastRunTimestamp_ && frameCount_ > dropFrameCount_ &&
+	if (lastRunTimestamp_ && frameCount_ > startupFrameCount_ &&
 	    delta < controllerMinFrameDuration * 0.9) {
 		/*
 		 * Ensure we merge the previous frame's metadata with the current

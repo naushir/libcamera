@@ -161,6 +161,7 @@ public:
 	Size ispMinCropSize_;
 
 	unsigned int dropFrameCount_;
+	unsigned int startupFrameCount_;
 
 	/*
 	 * If set, this stores the value that represets a gain of one for
