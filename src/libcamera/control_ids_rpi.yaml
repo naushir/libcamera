@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+#
+# Copyright (C) 2023, Raspberry Pi Ltd
+#
+%YAML 1.1
+---
+# Raspberry Pi (VC4 and PiSP) specific vendor controls
+vendor: rpi
+controls:
+  - PispConfigDumpFile:
+      type: string
+      description: |
+        Triggers the Raspberry Pi PiSP pipeline handler to generate a JSON
+        formatted dump of the Backend configuration to the filename given by the
+        value of the control.
+
+...
