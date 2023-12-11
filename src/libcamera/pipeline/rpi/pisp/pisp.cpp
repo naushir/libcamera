@@ -6,6 +6,7 @@
  */
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -1623,6 +1624,10 @@ void PiSPCameraData::cfeBufferDequeue(FrameBuffer *buffer)
 	job.buffers[stream] = buffer;
 
 	if (stream == &cfe_[Cfe::Output0]) {
+		/* Get frame wall clock. */
+		auto now = std::chrono::system_clock::now();
+		auto durNow = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch());
+
 		/*
 		 * Lookup the sensor controls used for this frame sequence from
 		 * DelayedControl and queue them along with the frame buffer.
@@ -1633,6 +1638,7 @@ void PiSPCameraData::cfeBufferDequeue(FrameBuffer *buffer)
 		 * as it does not receive the FrameBuffer object.
 		 */
 		ctrl.set(controls::SensorTimestamp, buffer->metadata().timestamp);
+		ctrl.set(controls::rpi::SyncFrameWallClock, durNow.count());
 		job.sensorControls = std::move(ctrl);
 		job.delayContext = delayContext;
 	} else if (stream == &cfe_[Cfe::Config]) {

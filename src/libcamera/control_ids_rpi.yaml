@@ -46,4 +46,19 @@ controls:
 
       size: [n]
 
+  - SyncServer:
+      type: bool
+      description: |
+        Source camera
+
+  - SyncClient:
+      type: bool
+      description: |
+        Client camera
+
+  - SyncFrameWallClock:
+      type: int64_t
+      description: |
+        Wall clock time
+
 ...
