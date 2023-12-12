@@ -2201,7 +2201,7 @@ void PiSPCameraData::tryRunPipeline()
 	ipa::RPi::PrepareParams params;
 	params.buffers.bayer = RPi::MaskBayerData | bayerId;
 	params.buffers.stats = RPi::MaskStats | statsId;
-	params.ipaContext = requestQueue_.front()->sequence();
+	params.ipaContext = job.buffers[&cfe_[Cfe::Output0]]->metadata().sequence;
 	params.delayContext = job.delayContext;
 	params.sensorControls = std::move(job.sensorControls);
 	params.requestControls = request->controls();
