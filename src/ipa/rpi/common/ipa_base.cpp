@@ -489,9 +489,14 @@ void IpaBase::processStats(const ProcessParams &params)
 		
 		struct SyncStatus syncStatus;
 		if (rpiMetadata.get("sync.status", syncStatus) == 0) {
-			LOG(IPARPI, Info) << "Adjusting frame duration by " << syncStatus.frameDurationOffset;
-			applyFrameDurations(minFrameDuration_ + syncStatus.frameDurationOffset,
-					    maxFrameDuration_ += syncStatus.frameDurationOffset);
+			if (syncStatus.frameDurationOffset) {
+				LOG(IPARPI, Info) << "Adjusting frame duration by " << syncStatus.frameDurationOffset;				
+				applyFrameDurations(minFrameDuration_ - syncStatus.frameDurationOffset,
+						    maxFrameDuration_ - syncStatus.frameDurationOffset);
+			} else {
+				LOG(IPARPI, Info) << "Setting frame duration for " << syncStatus.frameDurationFixed;				
+				applyFrameDurations(syncStatus.frameDurationFixed, syncStatus.frameDurationFixed);
+			}
 		}
 
 		struct AgcStatus agcStatus;
@@ -1430,6 +1435,8 @@ void IpaBase::applyFrameDurations(Duration minFrameDuration, Duration maxFrameDu
 				       mode_.minFrameDuration, mode_.maxFrameDuration);
 	maxFrameDuration_ = std::max(maxFrameDuration_, minFrameDuration_);
 
+	LOG(IPARPI, Info) << "frame durations : min " << minFrameDuration_ << " max " << maxFrameDuration_;
+
 	/* Return the validated limits via metadata. */
 	libcameraMetadata_.set(controls::FrameDurationLimits,
 			       { static_cast<int64_t>(minFrameDuration_.get<std::micro>()),
@@ -1441,7 +1448,7 @@ void IpaBase::applyFrameDurations(Duration minFrameDuration, Duration maxFrameDu
 	 * value possible.
 	 */
 	Duration maxShutter = Duration::max();
-	helper_->getBlanking(maxShutter, minFrameDuration_, maxFrameDuration_);
+	auto [vblank, hblank] = helper_->getBlanking(maxShutter, minFrameDuration_, maxFrameDuration_);
 
 	RPiController::AgcAlgorithm *agc = dynamic_cast<RPiController::AgcAlgorithm *>(
 		controller_.getAlgorithm("agc"));
@@ -1450,7 +1457,7 @@ void IpaBase::applyFrameDurations(Duration minFrameDuration, Duration maxFrameDu
 	RPiController::SyncAlgorithm *sync = dynamic_cast<RPiController::SyncAlgorithm *>(
 			controller_.getAlgorithm("sync"));
 	if (sync)
-		sync->setFrameDuration(minFrameDuration_);
+		sync->setFrameDuration((mode_.height + vblank) * ((mode_.width + hblank) * 1.0s / mode_.pixelRate) );
 }
 
 void IpaBase::applyAGC(const struct AgcStatus *agcStatus, ControlList &ctrls)
@@ -1478,6 +1485,7 @@ void IpaBase::applyAGC(const struct AgcStatus *agcStatus, ControlList &ctrls)
 			   << agcStatus->analogueGain << " (Gain Code: "
 			   << gainCode << ")";
 
+	LOG(IPARPI, Info) << "Applying vblank: " << static_cast<int32_t>(vblank);
 	ctrls.set(V4L2_CID_VBLANK, static_cast<int32_t>(vblank));
 	ctrls.set(V4L2_CID_EXPOSURE, exposureLines);
 	ctrls.set(V4L2_CID_ANALOGUE_GAIN, gainCode);
