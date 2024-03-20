@@ -416,9 +416,9 @@ int PipelineHandlerVc4::platformRegister(std::unique_ptr<RPi::CameraData> &camer
 	if (ret < 0)
 		return ret;
 
-	data->streams_.push_back(&data->unicam_[Unicam::Image]);
 	if (data->sensorMetadata_)
 		data->streams_.push_back(&data->unicam_[Unicam::Embedded]);
+	data->streams_.push_back(&data->unicam_[Unicam::Image]);
 
 	for (auto &stream : data->isp_)
 		data->streams_.push_back(&stream);
