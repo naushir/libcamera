@@ -69,8 +69,6 @@ public:
 	void freeBuffers();
 	virtual void platformFreeBuffers() = 0;
 
-	void enumerateVideoDevices(MediaLink *link, const std::string &frontend);
-
 	int loadPipelineConfiguration();
 	int loadIPA(ipa::RPi::InitResult *result);
 	int configureIPA(const CameraConfiguration *config, ipa::RPi::ConfigResult *result);
@@ -232,8 +230,9 @@ public:
 
 protected:
 	int registerCamera(std::unique_ptr<RPi::CameraData> &cameraData,
-			   MediaDevice *frontent, const std::string &frontendName,
-			   MediaDevice *backend, MediaEntity *sensorEntity);
+			   MediaDevice *frontent,
+			   MediaDevice *backend, MediaEntity *sensorEntity,
+			   const MediaDevice::MediaWalk &walk);
 
 	void mapBuffers(Camera *camera, const BufferMap &buffers, unsigned int mask);
 

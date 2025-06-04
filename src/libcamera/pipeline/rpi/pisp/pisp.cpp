@@ -907,6 +907,8 @@ bool PipelineHandlerPiSP::match(DeviceEnumerator *enumerator)
 			break;
 		}
 
+		std::vector<MediaDevice::MediaWalk> walks = cfeDevice->enumerateMediaWalks();
+
 		/*
 		 * The loop below is used to register multiple cameras behind
 		 * one or more video mux devices that are attached to a
@@ -914,9 +916,8 @@ bool PipelineHandlerPiSP::match(DeviceEnumerator *enumerator)
 		 * used simultaneously.
 		 */
 		unsigned int numCameras = 0;
-		for (MediaEntity *entity : cfeDevice->entities()) {
-			if (entity->function() != MEDIA_ENT_F_CAM_SENSOR)
-				continue;
+		for (const MediaDevice::MediaWalk &walk : walks) {
+			MediaEntity *sensorEntity = walk.front().entity;
 
 			const libpisp::PiSPVariant &variant =
 				libpisp::get_variant(cfeDevice->hwRevision(),
@@ -941,11 +942,11 @@ bool PipelineHandlerPiSP::match(DeviceEnumerator *enumerator)
 				break;
 			}
 
-			int ret = registerCamera(cameraData, cfeDevice, "csi2",
-						 ispDevice, entity);
+			int ret = registerCamera(cameraData, cfeDevice,
+						 ispDevice, sensorEntity, walk);
 			if (ret)
 				LOG(RPI, Error) << "Failed to register camera "
-						<< entity->name() << ": " << ret;
+						<< sensorEntity->name() << ": " << ret;
 			else
 				numCameras++;
 		}

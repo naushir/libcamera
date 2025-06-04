@@ -198,23 +198,25 @@ bool PipelineHandlerVc4::match(DeviceEnumerator *enumerator)
 			continue;
 		}
 
+		std::vector<MediaDevice::MediaWalk> walks = unicamDevice->enumerateMediaWalks();
+
 		/*
 		 * The loop below is used to register multiple cameras behind one or more
 		 * video mux devices that are attached to a particular Unicam instance.
 		 * Obviously these cameras cannot be used simultaneously.
 		 */
 		unsigned int numCameras = 0;
-		for (MediaEntity *entity : unicamDevice->entities()) {
-			if (entity->function() != MEDIA_ENT_F_CAM_SENSOR)
-				continue;
+		for (const MediaDevice::MediaWalk &walk : walks) {
+			MediaEntity *sensorEntity = walk.front().entity;
+			
 
 			std::unique_ptr<RPi::CameraData> cameraData = std::make_unique<Vc4CameraData>(this);
 			int ret = RPi::PipelineHandlerBase::registerCamera(cameraData,
-									   unicamDevice, "unicam-image",
-									   ispDevice, entity);
+									   unicamDevice,
+									   ispDevice, sensorEntity, walk);
 			if (ret)
 				LOG(RPI, Error) << "Failed to register camera "
-						<< entity->name() << ": " << ret;
+						<< sensorEntity->name() << ": " << ret;
 			else
 				numCameras++;
 		}

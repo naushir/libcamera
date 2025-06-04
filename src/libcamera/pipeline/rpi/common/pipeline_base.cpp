@@ -273,7 +273,6 @@ CameraConfiguration::Status RPiCameraConfiguration::validate()
 
 	/* Further fixups on the ISP output streams. */
 	for (auto &out : outStreams_) {
-
 		/*
 		 * We want to send the associated YCbCr info through to the driver.
 		 *
@@ -661,7 +660,8 @@ int PipelineHandlerBase::start(Camera *camera, const ControlList *controls)
 
 	/* Configure the number of dropped frames required on startup. */
 	data->dropFrameCount_ = data->config_.disableStartupFrameDrops
-			      ? 0 : result.dropFrameCount;
+					? 0
+					: result.dropFrameCount;
 
 	for (auto const stream : data->streams_)
 		stream->resetBuffers();
@@ -787,8 +787,9 @@ int PipelineHandlerBase::queueRequestDevice(Camera *camera, Request *request)
 }
 
 int PipelineHandlerBase::registerCamera(std::unique_ptr<RPi::CameraData> &cameraData,
-					MediaDevice *frontend, const std::string &frontendName,
-					MediaDevice *backend, MediaEntity *sensorEntity)
+					MediaDevice *frontend, MediaDevice *backend,
+					MediaEntity *sensorEntity,
+					const MediaDevice::MediaWalk &walk)
 {
 	CameraData *data = cameraData.get();
 	int ret;
@@ -802,12 +803,24 @@ int PipelineHandlerBase::registerCamera(std::unique_ptr<RPi::CameraData> &camera
 		data->sensorFormats_.emplace(mbusCode,
 					     data->sensor_->sizes(mbusCode));
 
-	/*
-	 * Enumerate all the Video Mux/Bridge devices across the sensor -> Fr
-	 * chain. There may be a cascade of devices in this chain!
-	 */
-	MediaLink *link = sensorEntity->getPadByIndex(0)->links()[0];
-	data->enumerateVideoDevices(link, frontendName);
+	/* See if we can auto configure this MC graph. */
+	for (auto it = walk.begin() + 1; it < walk.end() - 1; ++it) {
+		MediaEntity *entity = it->entity;
+		MediaLink *sinkLink = it->sinkLink;
+
+		/* We only deal with Video Mux and Bridge devices in cascade. */
+		if (entity->function() != MEDIA_ENT_F_VID_MUX &&
+		    entity->function() != MEDIA_ENT_F_VID_IF_BRIDGE) {
+			data->bridgeDevices_.clear();
+			break;
+		}
+
+		LOG(RPI, Info) << "Found video mux/bridge device " << entity->name()
+			       << " linked to sink pad " << sinkLink->sink()->index();
+
+		data->bridgeDevices_.emplace_back(std::make_unique<V4L2Subdevice>(entity), sinkLink);
+		data->bridgeDevices_.back().first->open();
+	}
 
 	ipa::RPi::InitResult result;
 	if (data->loadIPA(&result)) {
@@ -1000,99 +1013,6 @@ void CameraData::freeBuffers()
 	platformFreeBuffers();
 
 	buffersAllocated_ = false;
-}
-
-/*
- * enumerateVideoDevices() iterates over the Media Controller topology, starting
- * at the sensor and finishing at the frontend. For each sensor, CameraData stores
- * a unique list of any intermediate video mux or bridge devices connected in a
- * cascade, together with the entity to entity link.
- *
- * Entity pad configuration and link enabling happens at the end of configure().
- * We first disable all pad links on each entity device in the chain, and then
- * selectively enabling the specific links to link sensor to the frontend across
- * all intermediate muxes and bridges.
- *
- * In the cascaded topology below, if Sensor1 is used, the Mux2 -> Mux1 link
- * will be disabled, and Sensor1 -> Mux1 -> Frontend links enabled. Alternatively,
- * if Sensor3 is used, the Sensor2 -> Mux2 and Sensor1 -> Mux1 links are disabled,
- * and Sensor3 -> Mux2 -> Mux1 -> Frontend links are enabled. All other links will
- * remain unchanged.
- *
- *  +----------+
- *  |     FE   |
- *  +-----^----+
- *        |
- *    +---+---+
- *    | Mux1  |<------+
- *    +--^----        |
- *       |            |
- * +-----+---+    +---+---+
- * | Sensor1 |    |  Mux2 |<--+
- * +---------+    +-^-----+   |
- *                  |         |
- *          +-------+-+   +---+-----+
- *          | Sensor2 |   | Sensor3 |
- *          +---------+   +---------+
- */
-void CameraData::enumerateVideoDevices(MediaLink *link, const std::string &frontend)
-{
-	const MediaPad *sinkPad = link->sink();
-	const MediaEntity *entity = sinkPad->entity();
-	bool frontendFound = false;
-
-	/* We only deal with Video Mux and Bridge devices in cascade. */
-	if (entity->function() != MEDIA_ENT_F_VID_MUX &&
-	    entity->function() != MEDIA_ENT_F_VID_IF_BRIDGE)
-		return;
-
-	/* Find the source pad for this Video Mux or Bridge device. */
-	const MediaPad *sourcePad = nullptr;
-	for (const MediaPad *pad : entity->pads()) {
-		if (pad->flags() & MEDIA_PAD_FL_SOURCE) {
-			/*
-			 * We can only deal with devices that have a single source
-			 * pad. If this device has multiple source pads, ignore it
-			 * and this branch in the cascade.
-			 */
-			if (sourcePad)
-				return;
-
-			sourcePad = pad;
-		}
-	}
-
-	LOG(RPI, Debug) << "Found video mux device " << entity->name()
-			<< " linked to sink pad " << sinkPad->index();
-
-	bridgeDevices_.emplace_back(std::make_unique<V4L2Subdevice>(entity), link);
-	bridgeDevices_.back().first->open();
-
-	/*
-	 * Iterate through all the sink pad links down the cascade to find any
-	 * other Video Mux and Bridge devices.
-	 */
-	for (MediaLink *l : sourcePad->links()) {
-		enumerateVideoDevices(l, frontend);
-		/* Once we reach the Frontend entity, we are done. */
-		if (l->sink()->entity()->name() == frontend) {
-			frontendFound = true;
-			break;
-		}
-	}
-
-	/* This identifies the end of our entity enumeration recursion. */
-	if (link->source()->entity()->function() == MEDIA_ENT_F_CAM_SENSOR) {
-		/*
-		 * If the frontend is not at the end of this cascade, we cannot
-		 * configure this topology automatically, so remove all entity
-		 * references.
-		 */
-		if (!frontendFound) {
-			LOG(RPI, Warning) << "Cannot automatically configure this MC topology!";
-			bridgeDevices_.clear();
-		}
-	}
 }
 
 int CameraData::loadPipelineConfiguration()
